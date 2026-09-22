@@ -149,7 +149,7 @@ func TestParsePodList(t *testing.T) {
 	if db.Labels != "app=db" {
 		t.Errorf("db labels = %q", db.Labels)
 	}
-	if db.Qos != "Guaranteed" || db.Res != "1/2 · 1Gi/2Gi" {
+	if db.Qos != "Guaranteed" || db.Res != "-/2 · -/2Gi" {
 		t.Errorf("db qos/res mismatch: %+v", db)
 	}
 	if web.Labels != "app=web, tier=frontend" {
@@ -158,7 +158,7 @@ func TestParsePodList(t *testing.T) {
 	if web.Qos != "Burstable" {
 		t.Errorf("web qos = %q", web.Qos)
 	}
-	if web.Res != "100m/- · 128Mi/512Mi" {
+	if web.Res != "-/- · -/512Mi" {
 		t.Errorf("web res = %q", web.Res)
 	}
 	if web.Age == "" || !strings.HasSuffix(web.Age, "d") {
@@ -188,7 +188,7 @@ func TestResPart(t *testing.T) {
 		t.Errorf("resPart no-limit = %q, want %q", got, want)
 	}
 	// Без потребления — падает на req/lim.
-	if got, want := resPart("100m", "500m", "", cpuMilli), "100m/500m"; got != want {
+	if got, want := resPart("100m", "500m", "", cpuMilli), "-/500m"; got != want {
 		t.Errorf("resPart no-usage = %q, want %q", got, want)
 	}
 	// Целые ядра и двоичные/десятичные суффиксы памяти.
@@ -209,7 +209,7 @@ func TestTopPodsUsage(t *testing.T) {
 		if strings.Join(args, " ") != "--context c1 top pods -A --no-headers" {
 			return []byte("boom"), fmt.Errorf("unexpected: %s", strings.Join(args, " "))
 		}
-		return []byte("web-0          prod      12m     40Mi\ndb-0           prod      1       132Mi\n"), nil
+		return []byte("prod    web-0  12m   40Mi\nprod    db-0   1     132Mi\n"), nil
 	}
 	defer func() { runKubectlFn = oldRun }()
 
@@ -219,6 +219,81 @@ func TestTopPodsUsage(t *testing.T) {
 	}
 	if got, want := usage["prod|db-0"], [2]string{"1", "132Mi"}; got != want {
 		t.Errorf("usage db-0 = %v, want %v", got, want)
+	}
+	if got, ok := usage["web-0|prod"]; ok {
+		t.Errorf("перепутан порядок полей kubectl top: ns|pod = %q, есть лишний key web-0|prod", got)
+	}
+}
+
+func TestWorkloadOwnerMapAndResolve(t *testing.T) {
+	oldRun := runKubectlFn
+	// Плоский List: ReplicaSet web-abc123 владеет Deployment web; Job migrate —
+	// CronJob nightly; cronjob nightly без владельца.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if !strings.Contains(j, "get deployments,statefulsets,daemonsets,replicasets,jobs,cronjobs") {
+			return []byte("boom"), fmt.Errorf("unexpected: %s", j)
+		}
+		return []byte(`{"kind":"List","items":[
+			{"kind":"Deployment","metadata":{"name":"web","namespace":"prod","ownerReferences":[]}},
+			{"kind":"ReplicaSet","metadata":{"name":"web-abc123","namespace":"prod","ownerReferences":[{"kind":"Deployment","name":"web"}]}},
+			{"kind":"Job","metadata":{"name":"migrate","namespace":"ops","ownerReferences":[{"kind":"CronJob","name":"nightly"}]}},
+			{"kind":"CronJob","metadata":{"name":"nightly","namespace":"ops","ownerReferences":[]}}
+		]}`), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	m := workloadOwnerMap("c1")
+	if got, want := m["web-abc123|replicaset"], [2]string{"Deployment", "web"}; got != want {
+		t.Errorf("rs->deploy map = %v, want %v", got, want)
+	}
+	if got, want := m["migrate|job"], [2]string{"CronJob", "nightly"}; got != want {
+		t.Errorf("job->cronjob map = %v, want %v", got, want)
+	}
+
+	rsPod := Pod{OwnerKind: "ReplicaSet", Owner: "web-abc123"}
+	if got := resolveWorkload(&rsPod, m); got != "Deployment" || rsPod.Owner != "web" {
+		t.Errorf("resolve rs pod = %q, owner=%q, want Deployment/web", got, rsPod.Owner)
+	}
+	jobPod := Pod{OwnerKind: "Job", Owner: "migrate"}
+	if got := resolveWorkload(&jobPod, m); got != "CronJob" {
+		t.Errorf("resolve job pod = %q, want CronJob", got)
+	}
+	bare := Pod{OwnerKind: "", Owner: ""}
+	if got := resolveWorkload(&bare, m); got != "" {
+		t.Errorf("resolve bare pod = %q, want empty", got)
+	}
+	dsPod := Pod{OwnerKind: "DaemonSet", Owner: "node-exporter"}
+	if got := resolveWorkload(&dsPod, m); got != "DaemonSet" {
+		t.Errorf("resolve ds pod = %q, want DaemonSet", got)
+	}
+}
+
+func TestEgressKinds(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if !strings.Contains(j, "api-resources") {
+			return []byte("boom"), fmt.Errorf("unexpected: %s", j)
+		}
+		return []byte("services\ningresses\negressfirewalls.network.openshift.io\negressnetworkpolicies.network.openshift.io\n"), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	kinds := egressKinds("c1")
+	if len(kinds) != 2 {
+		t.Fatalf("egressKinds len = %d, want 2: %+v", len(kinds), kinds)
+	}
+	if kinds[0].plural != "egressfirewalls.network.openshift.io" || kinds[0].cat != "Network" {
+		t.Errorf("kinds[0] = %+v", kinds[0])
+	}
+
+	// Нет egress-CRD — пустой список.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte("services\ningresses\n"), nil
+	}
+	if kinds := egressKinds("c1"); kinds != nil {
+		t.Errorf("без egress-CRD kinds = %+v, want nil", kinds)
 	}
 }
 
@@ -305,19 +380,20 @@ func TestBuildCards(t *testing.T) {
 		Configs:  6,
 		CpuMilli: 1200, CpuTotalMilli: 4000,
 		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
+		CpuLimitMilli: 1200, MemLimitBytes: 2 << 30,
 		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
 	})
-	if len(cards) != 12 {
-		t.Fatalf("len(cards) = %d, want 12", len(cards))
+	if len(cards) != 14 {
+		t.Fatalf("len(cards) = %d, want 14", len(cards))
 	}
-	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Services", "Configs"}
-	row2 := []string{"CPU", "Memory", "PVC size", "PV/PVC"}
+	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Services", "Configs", "Events"}
+	row2 := []string{"CPU", "Memory", "HARD LIMITS", "PVC size", "PV/PVC"}
 	for i, l := range append(row1, row2...) {
 		if cards[i].Label != l {
 			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
 		}
 	}
-	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "svc", "configs", "", "", "pvc", "pvc"}
+	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "svc", "configs", "events", "", "", "", "pvc", "pvc"}
 	for i, s := range scopes {
 		if cards[i].Scope != s {
 			t.Errorf("cards[%d].Scope = %q, want %q (%s)", i, cards[i].Scope, s, cards[i].Label)
@@ -332,17 +408,23 @@ func TestBuildCards(t *testing.T) {
 	if cards[6].Value != "7" || cards[7].Value != "6" {
 		t.Errorf("services/configs cards = %+v", cards[6:8])
 	}
-	if cards[8].Value != "1.20 / 4.00" || cards[8].Hint != "cores in use / allocatable" {
-		t.Errorf("cpu card: %+v", cards[8])
+	if cards[8].Label != "Events" || cards[8].Value != "0" {
+		t.Errorf("events card: %+v", cards[8])
 	}
-	if cards[9].Value != "2.00 / 4.00 GiB" {
-		t.Errorf("memory card: %+v", cards[9])
+	if cards[9].Value != "1.20 / 4.00" || cards[9].Hint != "cores in use / allocatable" {
+		t.Errorf("cpu card: %+v", cards[9])
 	}
-	if cards[10].Value != "1.00 / 2.00 GiB" || cards[10].Label != "PVC size" {
-		t.Errorf("pvc size card: %+v", cards[10])
+	if cards[10].Value != "2.00 / 4.00 GiB" {
+		t.Errorf("memory card: %+v", cards[10])
 	}
-	if cards[11].Value != "2/5" || cards[11].Label != "PV/PVC" {
-		t.Errorf("pv/pvc card: %+v", cards[11])
+	if cards[11].Label != "HARD LIMITS" || cards[11].Value != "1.20 / 2.00 GiB" {
+		t.Errorf("hard limits card: %+v", cards[11])
+	}
+	if cards[12].Value != "1.00 / 2.00 GiB" || cards[12].Label != "PVC size" {
+		t.Errorf("pvc size card: %+v", cards[12])
+	}
+	if cards[13].Value != "2/5" || cards[13].Label != "PV/PVC" {
+		t.Errorf("pv/pvc card: %+v", cards[13])
 	}
 }
 
@@ -881,8 +963,8 @@ func TestAPIHandlerJSON(t *testing.T) {
 	if data.Stats.Contexts != 1 || data.Stats.AvailCtx != 1 {
 		t.Errorf("stats mismatch: %+v", data.Stats)
 	}
-	if len(data.Cards) != 12 {
-		t.Errorf("len(Cards) = %d, want 12", len(data.Cards))
+	if len(data.Cards) != 14 {
+		t.Errorf("len(Cards) = %d, want 14", len(data.Cards))
 	}
 }
 
@@ -1340,10 +1422,11 @@ func TestOverviewScopes(t *testing.T) {
 		]},
 		{"kind":"EndpointSliceList","items":[
 			{"metadata":{"name":"api-abc","namespace":"ops","creationTimestamp":"2026-01-05T00:00:00Z"}}
-		]},
-		{"kind":"ServiceAccountList","items":[
-			{"metadata":{"name":"default","namespace":"ops","creationTimestamp":"2026-01-06T00:00:00Z"}}
 		]}
+	]}`
+	runEvents := `{"items":[
+		{"metadata":{"namespace":"ops"},"type":"Warning","reason":"BackOff","message":"Back-off restarting failed container","involvedObject":{"kind":"Pod","name":"web-0"},"lastTimestamp":"2026-01-06T00:00:00Z"},
+		{"metadata":{"namespace":"prod"},"type":"Normal","reason":"Started","message":"Started container web","involvedObject":{"kind":"Pod","name":"web-0"},"lastTimestamp":"2026-01-06T01:00:00Z"}
 	]}`
 	runNodes := `{"items":[
 		{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
@@ -1382,7 +1465,7 @@ func TestOverviewScopes(t *testing.T) {
 		switch {
 		case strings.Contains(j, "get persistentvolumeclaims"):
 			return []byte(runPVC), nil
-		case strings.Contains(j, "get services,ingresses,networkpolicies,endpoints,endpointslices,serviceaccounts"):
+		case strings.Contains(j, "get services,ingresses,networkpolicies,endpoints,endpointslices"):
 			return []byte(runNet), nil
 		case strings.Contains(j, "get services"):
 			return []byte(runSVC), nil
@@ -1394,6 +1477,8 @@ func TestOverviewScopes(t *testing.T) {
 			return []byte(runJobs), nil
 		case strings.Contains(j, "get configmaps,secrets"):
 			return []byte(runConfigs), nil
+		case strings.Contains(j, "get events"):
+			return []byte(runEvents), nil
 		case strings.Contains(j, "get deployments,daemonsets,statefulsets,replicasets"):
 			return []byte(runWorkloads), nil
 		}
@@ -1429,10 +1514,10 @@ func TestOverviewScopes(t *testing.T) {
 		t.Errorf("pvc web/prod не найден: %+v", r.Items)
 	}
 
-	// svc: все Network-манифесты из обоих контекстов (2× service+ingress+…) — 12 элементов.	
+	// svc: все Network-манифесты из обоих контекстов (2× service+ingress+…) — 10 элементов.
 	r = call("svc")
-	if len(r.Items) != 12 {
-		t.Fatalf("svc items = %d, want 12", len(r.Items))
+	if len(r.Items) != 10 {
+		t.Fatalf("svc items = %d, want 10", len(r.Items))
 	}
 	kinds := map[string]bool{}
 	for _, it := range r.Items {
@@ -1443,6 +1528,29 @@ func TestOverviewScopes(t *testing.T) {
 	}
 	if !kinds["service"] || !kinds["ingress"] || !kinds["networkpolicy"] {
 		t.Errorf("svc kinds = %v, want service+ingress+networkpolicy", kinds)
+	}
+
+	// events: warning/normal события (по каждому контексту из моков).
+	r = call("events")
+	if len(r.Items) < 2 {
+		t.Fatalf("events items = %d, want >= 2", len(r.Items))
+	}
+	var hasWarn, hasNormal bool
+	for _, it := range r.Items {
+		if it.Kind != "event" {
+			t.Errorf("event kind = %q, want event", it.Kind)
+		}
+		if it.Type == "Warning" {
+			hasWarn = true
+			if it.Message == "" || it.Reason == "" {
+				t.Errorf("warning event %+v: empty reason/message", it)
+			}
+		} else if it.Type == "Normal" {
+			hasNormal = true
+		}
+	}
+	if !hasWarn || !hasNormal {
+		t.Errorf("events missing Warning/Normal: %+v", r.Items)
 	}
 
 	// nodes: ready/not ready.

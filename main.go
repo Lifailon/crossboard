@@ -52,8 +52,11 @@ type Pod struct {
 	Mem          string `json:"mem"`
 	CpuUse       string `json:"cpuuse"`
 	MemUse       string `json:"memuse"`
+	CpuLim       string `json:"cpulim"`
+	MemLim       string `json:"memlim"`
 	OwnerKind    string `json:"ownerkind"`
 	Owner        string `json:"owner"`
+	Workload     string `json:"workload"` // верхнеуровневый владелец: Deployment/StatefulSet/DaemonSet/Job/CronJob или "" (bare pod)
 	Created      string `json:"created"`
 	Age          string `json:"age"`
 }
@@ -74,6 +77,8 @@ type Stats struct {
 	NodeTotal     int
 	CpuMilli      int64
 	MemBytes      int64
+	CpuLimitMilli int64 // суммарные hard-лимиты CPU всех контейнеров, м-ядра
+	MemLimitBytes int64 // суммарные hard-лимиты памяти всех контейнеров, байты
 	CpuTotalMilli int64
 	MemTotalBytes int64
 	PVCBound      int
@@ -81,6 +86,7 @@ type Stats struct {
 	PVCBoundBytes int64
 	PVCTotalBytes int64
 	PVCOk         int
+	EventsWarning int // события type=Warning во всех кластерах
 }
 
 type Card struct {
@@ -156,6 +162,90 @@ type kubeContainerSpec struct {
 		Requests map[string]string `json:"requests"`
 		Limits   map[string]string `json:"limits"`
 	} `json:"resources"`
+}
+
+// wlObject — объект workload-ресурса (deploy/rs/sts/ds/job/cronjob) с его
+// собственным владельцем, чтобы резолвить цепочку ReplicaSet -> Deployment.
+type wlObject struct {
+	Kind     string `json:"kind"`
+	Metadata struct {
+		Name            string `json:"name"`
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"ownerReferences"`
+	} `json:"metadata"`
+}
+
+// workloadOwnerMap по одному `kubectl get workloads -A` строит карту
+// "name|kind" -> [ownerKind, ownerName] для подов, чьим владельцем является
+// ReplicaSet (=> Deployment) или Job (=> CronJob). Разбирает оба формата
+// kubectl: плоский List и вложенные под-List'ы.
+func workloadOwnerMap(ctx string) map[string][2]string {
+	out, err := runKubectlFn("--context", ctx, "get", "deployments,statefulsets,daemonsets,replicasets,jobs,cronjobs", "-A", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var ml kubectlMixedAll
+	if json.Unmarshal(trimToJSON(out), &ml) != nil {
+		return nil
+	}
+	m := make(map[string][2]string)
+	scan := func(kind string, raws []json.RawMessage) {
+		for _, raw := range raws {
+			var o wlObject
+			if json.Unmarshal(raw, &o) != nil {
+				continue
+			}
+			if o.Kind == "" {
+				o.Kind = kind
+			}
+			if len(o.Metadata.OwnerReferences) == 0 {
+				continue
+			}
+			ref := o.Metadata.OwnerReferences[0]
+			m[o.Metadata.Name+"|"+strings.ToLower(o.Kind)] = [2]string{ref.Kind, ref.Name}
+		}
+	}
+	for _, raw := range ml.Items {
+		var w struct {
+			Kind  string            `json:"kind"`
+			Items []json.RawMessage `json:"items"`
+		}
+		if json.Unmarshal(raw, &w) != nil {
+			continue
+		}
+		if len(w.Items) > 0 {
+			scan(strings.ToLower(strings.TrimSuffix(w.Kind, "List")), w.Items)
+			continue
+		}
+		var o wlObject
+		if json.Unmarshal(raw, &o) != nil || o.Metadata.Name == "" {
+			continue
+		}
+		if len(o.Metadata.OwnerReferences) == 0 {
+			continue
+		}
+		ref := o.Metadata.OwnerReferences[0]
+		m[o.Metadata.Name+"|"+strings.ToLower(o.Kind)] = [2]string{ref.Kind, ref.Name}
+	}
+	return m
+}
+
+// resolveWorkload поднимает владельца пода до верхнего уровня: ReplicaSet ->
+// Deployment, Job -> CronJob. Без резолва оставляет исходный ownerKind.
+func resolveWorkload(p *Pod, wl map[string][2]string) string {
+	if p.OwnerKind == "" {
+		return ""
+	}
+	if wl != nil {
+		if ref, ok := wl[p.Owner+"|"+strings.ToLower(p.OwnerKind)]; ok {
+			p.OwnerKind = ref[0]
+			p.Owner = ref[1]
+			return ref[0]
+		}
+	}
+	return p.OwnerKind
 }
 
 // kubectlPodList — подмножество структуры PodList из API Kubernetes, достаточное
@@ -234,6 +324,7 @@ type Overview struct {
 	Jobs          int   // суммарное число Jobs + CronJobs
 	JobsDone      int   // суммарное число успешно завершённых Job
 	Configs       int   // суммарное число ConfigMap + Secret
+	EventsWarning int   // события type=Warning во всех кластерах
 }
 
 // runKubectl выполняет kubectl с переданными аргументами и возвращает вывод.
@@ -319,7 +410,7 @@ func fetchAllReal() Overview {
 				}
 			}
 			ready, total, cpuT, memT := nodesContext(ctx)
-
+			var wl map[string][2]string
 			mounted := make(map[string]bool)
 			out, aerr := podsForContextAll(ctx)
 			if aerr != nil {
@@ -343,10 +434,17 @@ func fetchAllReal() Overview {
 				mu.Unlock()
 				return
 			}
+			// Резолвим верхнеуровневый Workload (ReplicaSet -> Deployment и
+			// Job -> CronJob) одним запросом workloads по контексту.
+			wl = workloadOwnerMap(ctx)
+			for i := range parsed {
+				parsed[i].Workload = resolveWorkload(&parsed[i], wl)
+			}
 			pvcBound, pvcTotal, pvcBoundBytes, pvcTotalBytes, pvcOK := pvcByContext(ctx, mounted)
 			svcCount := servicesByContext(ctx)
 			jobTotal, jobDone := countKubectlKinds(ctx, scopeKinds("jobs"))
 			cfgCount, _ := countKubectlKinds(ctx, scopeKinds("configs"))
+			evWarn := eventsByContext(ctx)
 			mu.Lock()
 			pods = append(pods, parsed...)
 			ov.CpuMilli += cpuM
@@ -366,6 +464,7 @@ func fetchAllReal() Overview {
 			ov.Jobs += jobTotal
 			ov.JobsDone += jobDone
 			ov.Configs += cfgCount
+			ov.EventsWarning += evWarn
 			ov.AvailCtx++
 			mu.Unlock()
 		}(ctx)
@@ -513,6 +612,44 @@ func servicesByContext(ctx string) int {
 	return len(list.Items)
 }
 
+// kubectlEvent — событие кластера (get events -A -o json).
+type kubectlEvent struct {
+	Metadata struct {
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Type           string `json:"type"`
+	Reason         string `json:"reason"`
+	Message        string `json:"message"`
+	Count          int    `json:"count"`
+	LastTimestamp  string `json:"lastTimestamp"`
+	InvolvedObject struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	} `json:"involvedObject"`
+}
+
+// eventsByContext возвращает число событий с type=Warning во всех namespace
+// кластера. Один вызов kubectl, ноль при ошибке/нет прав.
+func eventsByContext(ctx string) int {
+	out, err := runKubectlFn("--context", ctx, "get", "events", "-A", "-o", "json")
+	if err != nil {
+		return 0
+	}
+	var list struct {
+		Items []kubectlEvent `json:"items"`
+	}
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
+		return 0
+	}
+	var warn int
+	for _, ev := range list.Items {
+		if ev.Type == "Warning" {
+			warn++
+		}
+	}
+	return warn
+}
+
 // kubeKind — тип ресурса для агрегированных списков (карточки Jobs/Configs).
 type kubeKind struct {
 	kind, plural, cat string
@@ -545,10 +682,28 @@ func scopeKinds(scope string) []kubeKind {
 			{"networkpolicy", "networkpolicies", "Network"},
 			{"endpoints", "endpoints", "Network"},
 			{"endpointslice", "endpointslices", "Network"},
-			{"serviceaccount", "serviceaccounts", "Network"},
 		}
 	}
 	return nil
+}
+
+// egressKinds находит egress-политики (EgressFirewall, EgressNetworkPolicy и
+// т.п.): любой ресурс, в названии которого есть "egress". Если CRD нет —
+// возвращается nil и список Network не меняется.
+func egressKinds(ctx string) []kubeKind {
+	out, err := runKubectlFn("--context", ctx, "api-resources", "-o", "name")
+	if err != nil {
+		return nil
+	}
+	var kinds []kubeKind
+	for _, line := range splitLines(string(out)) {
+		name := strings.TrimSpace(line)
+		if name == "" || !strings.Contains(strings.ToLower(name), "egress") {
+			continue
+		}
+		kinds = append(kinds, kubeKind{kind: name, plural: name, cat: "Network"})
+	}
+	return kinds
 }
 
 // kubectlMixedAll — результат `kubectl get a,b,c -A -o json`. Ранние версии
@@ -754,6 +909,8 @@ func parsePodList(ctx string, data []byte, usage map[string][2]string, mounted m
 				Mem:          mem,
 				CpuUse:       use[0],
 				MemUse:       use[1],
+				CpuLim:       c.cpuLim,
+				MemLim:       c.memLim,
 				OwnerKind:    ownerKind,
 				Owner:        owner,
 				Created:      created,
@@ -787,13 +944,15 @@ func joinLabels(labels map[string]string) string {
 }
 
 func resPart(req, lim, use string, parseF func(string) (int64, bool)) string {
-	bare := fmt.Sprintf("%s/%s", orDash(req), orDash(lim))
+	// Нет метрик использования — показываем только hard limit ("-/500m"),
+	// чтобы не вводить в заблуждение, будто request — это нагрузка.
 	if use == "" {
-		return bare
+		return fmt.Sprintf("-/%s", orDash(lim))
 	}
 	if _, ok := parseF(use); !ok {
-		return bare
+		return fmt.Sprintf("-/%s", orDash(lim))
 	}
+	bare := fmt.Sprintf("%s/%s", orDash(req), orDash(lim))
 	base, label := lim, lim
 	if _, ok := parseF(lim); !ok {
 		base, label = req, req
@@ -875,7 +1034,7 @@ func topPodsUsage(ctx string) map[string][2]string {
 		if len(f) < 4 {
 			continue
 		}
-		usage[f[1]+"|"+f[0]] = [2]string{f[2], f[3]}
+		usage[f[0]+"|"+f[1]] = [2]string{f[2], f[3]}
 	}
 	return usage
 }
@@ -885,6 +1044,18 @@ func orDash(v string) string {
 		return "-"
 	}
 	return v
+}
+
+// parseRFC3339 разбирает timestamp события ("2026-01-01T12:00:00Z").
+func parseRFC3339(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
 }
 
 func ageString(ts time.Time) string {
@@ -985,6 +1156,12 @@ func collectStats(pods []Pod) Stats {
 		if p.Phase == "Running" {
 			st.Running++
 		}
+		if c, ok := cpuMilli(p.CpuLim); ok {
+			st.CpuLimitMilli += c
+		}
+		if m, ok := memBytes(p.MemLim); ok {
+			st.MemLimitBytes += m
+		}
 	}
 
 	for _, phase := range podPhase {
@@ -1033,8 +1210,10 @@ func buildCards(st Stats) []Card {
 		{Label: "Jobs", Value: frac(st.JobsDone, st.Jobs), Hint: "succeeded jobs / total (jobs + cronjobs)", Color: "blue", Scope: "jobs"},
 		{Label: "Services", Value: strconv.Itoa(st.Services), Hint: "services across clusters", Color: "amber", Scope: "svc"},
 		{Label: "Configs", Value: strconv.Itoa(st.Configs), Hint: "configmaps + secrets across clusters", Color: "violet", Scope: "configs"},
+		{Label: "Events", Value: strconv.Itoa(st.EventsWarning), Hint: "events with type=Warning across clusters", Color: "redSoft", Scope: "events"},
 		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "amber"},
 		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "redSoft"},
+		{Label: "HARD LIMITS", Value: fmt.Sprintf("%.2f / %.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB", Color: "violet"},
 		{Label: "PVC size", Value: gibFrac(st.PVCBoundBytes, st.PVCTotalBytes) + " GiB", Hint: "capacity allocated to PV / total PVC requested", Color: "ok", Scope: "pvc"},
 		{Label: "PV/PVC", Value: pvPvcValue(st), Hint: "bound PV / total PVC", Color: "teal", Scope: "pvc"},
 	}
@@ -1308,8 +1487,8 @@ func restartFollowStream(ctx context.Context, sels []Selection, since string, fo
 }
 
 const (
-	followRetryDelay  = 700 * time.Millisecond // пауза перед переоткрытием стрима
-	followMaxErrors   = 5                      // сколько сбоев подряд терпим
+	followRetryDelay = 700 * time.Millisecond // пауза перед переоткрытием стрима
+	followMaxErrors  = 5                      // сколько сбоев подряд терпим
 )
 
 // procReader — объединённый (stdout+stderr) поток из kubectl-процесса,
@@ -1423,6 +1602,7 @@ func gatherData() PageData {
 	st.Jobs = ov.Jobs
 	st.JobsDone = ov.JobsDone
 	st.Configs = ov.Configs
+	st.EventsWarning = ov.EventsWarning
 	return PageData{
 		Pods:       pods,
 		Contexts:   ctxs,
@@ -1521,13 +1701,15 @@ streamDone:
 
 // ObjRef — одна строка в списке связанных ресурсов.
 type ObjRef struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Cat    string `json:"cat"`
-	Reason string `json:"reason"`
-	Age    string `json:"age"`
-	Ctx    string `json:"ctx,omitempty"`
-	Ns     string `json:"ns,omitempty"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Cat     string `json:"cat"`
+	Reason  string `json:"reason"`
+	Age     string `json:"age"`
+	Ctx     string `json:"ctx,omitempty"`
+	Ns      string `json:"ns,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // Причины связи ресурса с подом.
@@ -1863,12 +2045,44 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 				}
 			}(c, kind, plural, cat)
 		}
-	case "jobs", "configs", "workloads", "svc":
-		kinds := scopeKinds(scope)
+	case "events":
+		var kind, cat = "event", "Event"
 		for _, c := range ctxs {
 			wg.Add(1)
-			go func(c string, kinds []kubeKind) {
+			go func(c string) {
 				defer wg.Done()
+				out, e := runKubectlFn("--context", c, "get", "events", "-A", "-o", "json")
+				if e != nil {
+					mu.Lock()
+					refs = append(refs, ObjRef{Kind: kind, Ctx: c, Reason: "RBAC/error"})
+					mu.Unlock()
+					return
+				}
+				var list struct {
+					Items []kubectlEvent `json:"items"`
+				}
+				if json.Unmarshal(trimToJSON(out), &list) != nil {
+					return
+				}
+				for _, ev := range list.Items {
+					add(ObjRef{
+						Kind: kind, Name: ev.Metadata.Namespace + "/" + ev.InvolvedObject.Kind + "/" + ev.InvolvedObject.Name,
+						Cat: cat, Reason: ev.Reason, Type: ev.Type, Message: ev.Message,
+						Ctx: c, Ns: ev.Metadata.Namespace,
+						Age: ageTime(parseRFC3339(ev.LastTimestamp)),
+					})
+				}
+			}(c)
+		}
+	case "jobs", "configs", "workloads", "svc":
+		for _, c := range ctxs {
+			wg.Add(1)
+			go func(c string) {
+				defer wg.Done()
+				kinds := scopeKinds(scope)
+				if scope == "svc" {
+					kinds = append(kinds, egressKinds(c)...)
+				}
 				if len(kinds) == 0 {
 					return
 				}
@@ -1915,7 +2129,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 						Age: ageTime(mo.Metadata.CreationTimestamp),
 					})
 				}
-			}(c, kinds)
+			}(c)
 		}
 	default:
 		resp.Error = "unknown scope"

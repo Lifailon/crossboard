@@ -148,6 +148,8 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .modal-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
 .modal-head h2{margin:0;font-size:16px;white-space:nowrap}
 .modal-head h2 span{color:var(--accent);font-family:var(--mono);font-weight:600}
+.modal-close{margin-left:auto;flex:0 0 auto;align-self:center;padding:8px 13px;font-size:14px;line-height:1;border-radius:10px;color:var(--muted)}
+.modal-close:hover{border-color:var(--red);background:rgba(248,113,113,.12);color:#f87171}
 .modal-tools{margin-left:auto;display:flex;flex-direction:column;align-items:stretch;gap:8px;flex:1 1 auto;min-width:0}
 .mt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .mt-row button{flex:0 0 auto}
@@ -173,9 +175,12 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .sw .trk::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#c7d4ea;transition:left .15s,background .15s}
 .sw input:checked + .trk{background:var(--accent)}
 .sw input:checked + .trk::after{left:15px;background:#08111f}
-.conn{font-size:12px;font-weight:600;white-space:nowrap}
-.conn.on{color:var(--ok)} .conn.off{color:var(--red)} .conn.wait{color:var(--warn)}
-.count{font-size:12px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.conn{font-size:12px;font-weight:600;white-space:nowrap;border-radius:999px;padding:5px 12px;border:1px solid var(--line);background:var(--bg2)}
+.conn.on{color:var(--ok);border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}
+.conn.off{color:var(--red);border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.08)}
+.conn.wait{color:var(--warn);border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
+.conn.done{color:var(--accent);border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.08)}
+.count{font-size:12px;color:var(--text);font-family:var(--mono);white-space:nowrap;border-radius:999px;padding:5px 12px;border:1px solid var(--line);background:var(--bg2)}
 .log-body{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#070c19;--ctxw:9ch;--podw:16ch}
 .log-body.no-wrap{overflow-x:auto}
 .log-body.no-wrap .logline{min-width:max-content}
@@ -245,7 +250,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 {{end}}
 
 <section class="cards" id="cards">
-{{range $i,$c := .Cards}}{{if lt $i 8}}
+{{range $i,$c := .Cards}}{{if lt $i 9}}
   <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
     <div class="label">{{.Label}}</div>
     <div class="value">{{.Value}}</div>
@@ -253,7 +258,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 {{end}}{{end}}
 </section>
 <section class="cards row2" id="cards2">
-{{range $i,$c := .Cards}}{{if ge $i 8}}
+{{range $i,$c := .Cards}}{{if ge $i 9}}
   <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
     <div class="label">{{.Label}}</div>
     <div class="value">{{.Value}}</div>
@@ -266,6 +271,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
     <input id="fQ" type="search" placeholder="Filter by pod or container name" autocomplete="off">
     <span class="ico">&#8981;</span>
   </div>
+  <select id="fKind"><option value="">Workload: all</option></select>
   <select id="fCtx"><option value="">Cluster: all</option>{{range .Contexts}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNs"><option value="">Namespace: all</option>{{range .Namespaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNode"><option value="">Node: all</option>{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
@@ -306,7 +312,8 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
               data-cont="{{.Container}}" data-node="{{.Node}}" data-phase="{{.Phase}}"
               data-state="{{.State}}" data-ready="{{.Ready}}" data-rests="{{.RestartCount}}"
               data-image="{{.Image}}" data-cpu="{{.Cpu}}" data-mem="{{.Mem}}" data-ts="{{.Created}}"
-              data-owner="{{.Owner}}" data-ownerkind="{{.OwnerKind}}">
+              data-owner="{{.Owner}}" data-ownerkind="{{.OwnerKind}}" data-workload="{{.Workload}}"
+              data-cpuuse="{{.CpuUse}}" data-memuse="{{.MemUse}}">
             <td class="chk"><input type="checkbox" class="row-check" value="{{.ID}}"></td>
             <td class="ctx">{{.Context}}</td>
             <td class="ns">{{.Namespace}}</td>
@@ -339,7 +346,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-window">
     <header class="modal-head">
-      <h2><span id="mdCount"></span></h2>
+      <h2>Cluster logs</h2>
       <div class="modal-tools">
         <div class="mt-row" id="toolsFilters">
           <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
@@ -351,50 +358,50 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <span class="seg-thumb"></span>
           </div>
           <label class="sw" title="Ignore case (insensitive)">
-            <input type="checkbox" id="insensChk" checked><span class="trk"></span>Case-insensitive
+            <input type="checkbox" id="insensChk" checked><span class="trk"></span>Ignore-case
           </label>
           <label class="sw" title="Show 1 line before/after each match (grep -A 1 -B 1)">
             <input type="checkbox" id="ctxChk"><span class="trk"></span>Context
           </label>
-        </div>
-        <div class="mt-row" id="toolsModes">
-          <button id="followChk" class="tgl on" title="Follow new lines">Follow</button>
-          <button id="btnPause" class="tgl" title="Pause / resume the stream">Pause</button>
-          <span class="conn wait" id="connState">-</span>
-          <span class="count" id="lineCount">0</span>
-          <button id="btnClear">Clear</button>
-          <button id="btnDownload">Download</button>
-          <button id="btnClose">&#10005;</button>
-          <select id="sinceSel" class="sel" title="Time window: how far back to load log history">
-            <option value="">All</option>
-            <option value="1h">1h</option>
-            <option value="6h">6h</option>
-            <option value="12h">12h</option>
-            <option value="24h">24h</option>
-            <option value="7d">7d</option>
-            <option value="30d">30d</option>
-          </select>
-          <select id="linesSel" class="sel" title="Number of recent lines to load (All = no limit)">
-            <option value="0">All</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="200" selected>200</option>
-            <option value="500">500</option>
-            <option value="1000">1000</option>
-            <option value="2000">2000</option>
-            <option value="5000">5000</option>
-          </select>
           <label class="sw" title="Wrap long lines (off = horizontal scroll)">
             <input type="checkbox" id="wrapChk" checked><span class="trk"></span>Word-wrap
           </label>
           <label class="sw" title="Show built-in kubectl timestamps">
             <input type="checkbox" id="tsChk" checked><span class="trk"></span>Timestamp
           </label>
-          <label class="sw" title="Auto scroll to the newest line">
-            <input type="checkbox" id="autoScroll" checked><span class="trk"></span>Auto-scroll
-          </label>
+        </div>
+        <div class="mt-row" id="toolsModes">
+          <button id="followChk" class="tgl on" title="Follow new lines">Follow</button>
+          <button id="btnPause" class="tgl" title="Pause / resume the stream">Pause</button>
+          <button id="autoScroll" class="tgl on" title="Auto scroll to the newest line">Scroll</button>
+          <span class="conn wait" id="connState">-</span>
+          <span class="count" id="lineCount">0</span>
+          <button id="btnClear">Clear</button>
+          <button id="btnDownload">Download</button>
+          <select id="sinceSel" class="sel" title="Time window: how far back to load log history">
+            <option value="">All</option>
+            <option value="1h">1h</option>
+            <option value="3h">3h</option>
+            <option value="6h">6h</option>
+            <option value="12h">12h</option>
+            <option value="24h">24h</option>
+            <option value="48h">48h</option>
+            <option value="72h">72h</option>
+            <option value="168h">168h</option>
+          </select>
+          <select id="linesSel" class="sel" title="Number of recent lines to load (Follow = no line limit)">
+            <option value="0" selected>Follow</option>
+            <option value="100">100</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+            <option value="3000">3000</option>
+            <option value="5000">5000</option>
+            <option value="10000">10000</option>
+          </select>
         </div>
       </div>
+      <button id="btnClose" class="modal-close" title="Close">&#10005;</button>
     </header>
     <div id="logBody" class="log-body"></div>
     <footer class="modal-foot">
@@ -408,9 +415,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
   <div class="modal-window">
     <header class="modal-head">
       <h2>Resources <span id="specTitle"></span></h2>
-      <div class="modal-tools">
-        <button id="btnSpecClose" title="Close">&#10005;</button>
-      </div>
+      <button id="btnSpecClose" class="modal-close" title="Close">&#10005;</button>
     </header>
     <div class="spec-meta" id="specMeta"></div>
     <div class="spec-wrap">
@@ -428,14 +433,53 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
   </div>
 </div>
 
+<div id="eventsModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-window">
+    <header class="modal-head">
+      <h2>Cluster events <span id="evTitle"></span></h2>
+      <button id="btnEvClose" class="modal-close" title="Close">&#10005;</button>
+    </header>
+    <div class="spec-tools">
+      <select id="evType">
+        <option value="">Type: all</option>
+        <option value="Warning">Warning</option>
+        <option value="Normal">Normal</option>
+      </select>
+      <input id="evFilter" type="search" placeholder="Filter events (reason, object, message)..." autocomplete="off">
+      <span class="search-stat" id="evStat"></span>
+    </div>
+    <div class="tablewrap">
+      <div class="panel">
+        <div class="table-scroll">
+          <table id="eventsTable">
+            <thead>
+              <tr>
+                <th>Age</th>
+                <th>Cluster</th>
+                <th>Namespace</th>
+                <th>Object</th>
+                <th>Type</th>
+                <th>Reason</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="eventsBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
 "use strict";
 var $ = function (s) { return document.querySelector(s); };
+var INIT_STATS = {avail: {{.Stats.AvailCtx}}, total: {{.Stats.Contexts}}, cpuTotal: {{.Stats.CpuTotalMilli}}, memTotal: {{.Stats.MemTotalBytes}}};
 var modal = $("#modal");
 var logBody = $("#logBody");
 var tbody = $("#tbody");
-var fQ = $("#fQ"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPhase = $("#fPhase");
+var fQ = $("#fQ"), fKind = $("#fKind"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPhase = $("#fPhase");
 var selectAll = $("#selectAll"), btnOpen = $("#btnOpen");
 var selFoot = $("#selFoot"), selFootLabel = $("#selFootLabel");
 var connState = $("#connState"), lineCountEl = $("#lineCount"), selInfo = $("#selInfo");
@@ -465,9 +509,118 @@ function rowTokens(tr) {
 
 function cacheRows() { rows = Array.prototype.slice.call(tbody.querySelectorAll("tr")); }
 
+function populateKindFilter() {
+  var kinds = {};
+  rows.forEach(function (tr) {
+    if (!tr.dataset || !tr.dataset.workload) return;
+    kinds[tr.dataset.workload] = 1;
+  });
+  var hasBare = rows.some(function (tr) { return tr.dataset && !tr.dataset.workload; });
+  var prev = fKind.value;
+  fKind.innerHTML = "";
+  var o = document.createElement("option");
+  o.value = ""; o.textContent = "Workload: all";
+  fKind.appendChild(o);
+  Object.keys(kinds).sort().forEach(function (k) {
+    var opt = document.createElement("option");
+    opt.value = k; opt.textContent = k;
+    fKind.appendChild(opt);
+  });
+  if (hasBare) {
+    var ob = document.createElement("option");
+    ob.value = "_pod"; ob.textContent = "Pod (no owner)";
+    fKind.appendChild(ob);
+  }
+  var ok = false;
+  Array.prototype.forEach.call(fKind.options, function (op) { if (op.value === prev) ok = true; });
+  fKind.value = ok ? prev : "";
+}
+
+function parseCpuMilli(v) {
+  v = String(v == null ? "" : v).trim().toLowerCase();
+  if (!v) return 0;
+  if (v.slice(-1) === "m") return parseFloat(v.slice(0, -1)) || 0;
+  return (parseFloat(v) || 0) * 1000;
+}
+
+function parseMemKi(v) {
+  v = String(v == null ? "" : v).trim().toLowerCase();
+  if (!v) return 0;
+  var m = /^([\d.]+)\s*([kKmMgGtT]?i?)?$/.exec(v);
+  if (!m) return 0;
+  var n = parseFloat(m[1]);
+  var mult = 1;
+  switch (m[2]) {
+    case "k": case "ki": mult = 1 << 10; break;
+    case "m": case "mi": mult = 1 << 20; break;
+    case "g": case "gi": mult = 1 << 30; break;
+    case "t": case "ti": mult = 1 << 40; break;
+  }
+  return n * mult;
+}
+
+// Пересчёт «подовых» карточек по текущим фильтрам (Clusters/Ns/Pods/Containers/CPU/MEM).
+// Знаменатели allocatable берут из сводки ECLISPных данных (INIT_STATS или свежий /api/pods).
+function recalcCards() {
+  var src = (window.__kubelogsData && window.__kubelogsData.stats) || INIT_STATS;
+  var ctxSet = {}, nsSet = {}, podSet = {}, podRunning = 0, cont = 0, contRunning = 0;
+  var cpuUse = 0, memUse = 0;
+  rows.forEach(function (tr) {
+    if (tr.style.display === "none") return;
+    if (!tr.dataset || !tr.dataset.ctx) return;
+    ctxSet[tr.dataset.ctx] = 1;
+    nsSet[tr.dataset.ns] = 1;
+    var pk = tr.dataset.ctx + "|" + tr.dataset.ns + "|" + tr.dataset.pod;
+    if (tr.dataset.phase === "Running") podRunning++;
+    if (tr.dataset.phase === "Running") contRunning++;
+    cont++;
+    podSet[pk] = 1;
+    if (tr.dataset.cpuuse) cpuUse += parseCpuMilli(tr.dataset.cpuuse);
+    if (tr.dataset.memuse) memUse += parseMemKi(tr.dataset.memuse);
+  });
+  var pods = Object.keys(podSet).length;
+  var ready = optsCnt(ctxSet);
+  setCardValue("Clusters", ready + "/" + (src.total || 0));
+  setCardValue("Namespaces", Object.keys(nsSet).length);
+  setCardValue("Pods", podRunning + "/" + pods);
+  setCardValue("Containers", contRunning + "/" + cont);
+  // Если в видимых строках нет данных об использовании (метрики недоступны
+  // или кластер без metrics-server), не затираем серверные значения карточек.
+  if (cpuUse > 0 || memUse > 0) {
+    setCardValue("CPU", fmtCore(cpuUse) + " / " + fmtCore(src.cpuTotal || 0));
+    setCardValue("Memory", fmtGiB(memUse) + " / " + fmtGiB(src.memTotal || 0) + " GiB");
+  }
+}
+
+function optsCnt(obj) {
+  var n = 0;
+  for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) n++;
+  return n;
+}
+
+function setCardValue(label, value) {
+  var hosts = [document.getElementById("cards"), document.getElementById("cards2")];
+  for (var i = 0; i < hosts.length; i++) {
+    var h = hosts[i];
+    if (!h) continue;
+    var cards = h.querySelectorAll(".card");
+    for (var j = 0; j < cards.length; j++) {
+      var l = cards[j].querySelector(".label");
+      if (l && l.textContent === label) {
+        cards[j].querySelector(".value").textContent = value;
+        return cards[j];
+      }
+    }
+  }
+  return null;
+}
+
+function fmtCore(milli) { return (milli / 1000).toFixed(2); }
+function fmtGiB(bytes) { return (bytes / (1 << 30)).toFixed(2); }
+
 function applyFilters() {
   var q = norm(fQ.value);
-  var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value;
+  var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value, w = fKind.value;
   var vis = 0;
   rows.forEach(function (tr) {
     var ok = (!q || rowTokens(tr).indexOf(q) !== -1);
@@ -475,6 +628,10 @@ function applyFilters() {
     if (ok && n && tr.dataset.ns !== n) ok = false;
     if (ok && nd && tr.dataset.node !== nd) ok = false;
     if (ok && p && tr.dataset.phase !== p) ok = false;
+    if (ok && w) {
+      if (w === "_pod") { if (tr.dataset.workload) ok = false; }
+      else if (tr.dataset.workload !== w) ok = false;
+    }
     tr.style.display = ok ? "" : "none";
     if (ok) vis++;
   });
@@ -491,6 +648,7 @@ function applyFilters() {
       tbody.appendChild(e2);
     } else { e2.style.display = ""; }
   } else if (e2) { e2.style.display = "none"; }
+  recalcCards();
 }
 
 function updateSel() {
@@ -511,6 +669,7 @@ function checkAllVisible() {
 }
 
 fQ.addEventListener("input", applyFilters);
+fKind.addEventListener("change", applyFilters);
 fCtx.addEventListener("change", applyFilters);
 fNs.addEventListener("change", applyFilters);
 fNode.addEventListener("change", applyFilters);
@@ -691,7 +850,9 @@ function renderTable(pods) {
     tr.dataset.image = p.image; tr.dataset.cpu = p.cpu || ""; tr.dataset.mem = p.mem || "";
     tr.dataset.ts = p.created || "";
     tr.dataset.owner = p.owner || ""; tr.dataset.ownerkind = p.ownerkind || "";
+    tr.dataset.workload = p.workload || "";
     tr.dataset.labels = p.labels || "";
+    tr.dataset.cpuuse = p.cpuuse || ""; tr.dataset.memuse = p.memuse || "";
 
     var t1 = td("chk", null);
     var cb = document.createElement("input");
@@ -723,6 +884,7 @@ function renderTable(pods) {
     tbody.appendChild(tr);
   });
   cacheRows();
+  populateKindFilter();
   updateSel();
 }
 
@@ -731,8 +893,8 @@ function renderAll(d) {
   tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
   window.__kubelogsData = d;
   var cards = d.cards || [];
-  renderCards($("#cards"), cards.slice(0, 8));
-  renderCards($("#cards2"), cards.slice(8));
+  renderCards($("#cards"), cards.slice(0, 9));
+  renderCards($("#cards2"), cards.slice(9));
   renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || []);
   renderTable(d.pods || []);
   tbody.querySelectorAll(".row-check").forEach(function (cb) {
@@ -755,6 +917,7 @@ function renderAll(d) {
 }
 
 cacheRows();
+populateKindFilter();
 applyFilters();
 updateSel();
 
@@ -779,22 +942,24 @@ function clearLog() {
   maxCtxW = 9; maxPodW = 16;
   logBody.style.removeProperty("--ctxw");
   logBody.style.removeProperty("--podw");
-  $("#mdCount").textContent = "";
   setConn("-", "wait");
   lineCountEl.textContent = "0";
-  selInfo.textContent = "";
   logFilter.value = "";
+}
+
+function updateSelInfo() {
+  var ids = selectedIDs();
+  var names = ids.map(function (id) {
+    var parts = id.split("|");
+    return parts[0] + "/" + parts[2] + "/" + (parts[3] || "-");
+  }).join(";  ");
+  selInfo.textContent = "Selected containers: " + ids.length + (ids.length ? " — " + names : "");
 }
 
 function openModal() {
   var ids = selectedIDs();
   if (ids.length === 0) return;
   clearLog();
-  $("#mdCount").textContent = ids.length;
-  selInfo.textContent = ids.map(function (id) {
-    var parts = id.split("|");
-    return parts[0] + "/" + parts[2] + "/" + (parts[3] || "-");
-  }).join(";  ");
   modal.classList.remove("hidden");
   paused = false;
   btnPause.textContent = "Pause";
@@ -813,6 +978,7 @@ var lastKey = null;
 var settling = false;
 var settleTimer = null;
 function followOn() { return followChk.classList.contains("on"); }
+function autoScrollOn() { return autoScroll.classList.contains("on"); }
 function settleStart() {
   settling = true;
   if (settleTimer) clearTimeout(settleTimer);
@@ -822,6 +988,7 @@ function settleStart() {
 function startStream() {
   closeStream();
   var ids = selectedIDs();
+  updateSelInfo();
   if (ids.length === 0) { setConn("Nothing selected", "off"); return; }
   setConn("Connecting...", "wait");
   logBody.scrollTop = 0;
@@ -851,7 +1018,7 @@ function startStream() {
       // по --since-time, а этот клиентский перезапуск — лишь запасной путь.
       setTimeout(startStream, 1500);
     } else if (!followOn()) {
-      setConn("History loaded (follow off)", "off");
+      setConn("History loaded", "done");
     } else {
       setConn("Stream finished", "off");
     }
@@ -1089,7 +1256,7 @@ function addLine(d, isErr) {
   trackWidth("ts", d.timestamp || "");
   trackWidth("pod", w.textContent);
 
-  el.appendChild(b); el.appendChild(t); el.appendChild(w); el.appendChild(m);
+  el.appendChild(b); el.appendChild(w); el.appendChild(t); el.appendChild(m);
   logBody.appendChild(el);
   totalLines++;
 
@@ -1138,7 +1305,7 @@ function addLine(d, isErr) {
   });
 
   lineCountEl.textContent = shownLines + " / " + totalLines;
-  if (autoScroll.checked && !settling) logBody.scrollTop = logBody.scrollHeight;
+  if (autoScrollOn() && !settling) logBody.scrollTop = logBody.scrollHeight;
 }
 
 function applyLogFilter() {
@@ -1176,12 +1343,13 @@ document.querySelectorAll('input[name="logMode"]').forEach(function (r) {
   r.addEventListener("change", applyLogFilter);
 });
 
-autoScroll.addEventListener("change", function () {
-  if (autoScroll.checked) logBody.scrollTop = logBody.scrollHeight;
+autoScroll.addEventListener("click", function () {
+  autoScroll.classList.toggle("on");
+  if (autoScrollOn()) logBody.scrollTop = logBody.scrollHeight;
 });
 logBody.addEventListener("scroll", function () {
   var near = logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 60;
-  if (!near && autoScroll.checked) autoScroll.checked = false;
+  if (!near && autoScrollOn()) autoScroll.classList.remove("on");
 });
 
 function restartIfStreaming() {
@@ -1234,7 +1402,7 @@ $("#btnDownload").addEventListener("click", function () {
   var lines = [];
   logBody.querySelectorAll(".logline:not(.hide)").forEach(function (el) {
     var parts = [];
-    ["lb-time", "lb-badge", "lb-where", "lb-msg"].forEach(function (c) {
+    ["lb-badge", "lb-where", "lb-time", "lb-msg"].forEach(function (c) {
       var q = el.querySelector("." + c);
       if (q && q.textContent) parts.push(q.textContent);
     });
@@ -1532,7 +1700,7 @@ var CARD_SCOPE_TITLES = {
   ctx: "Clusters", ns: "Namespaces", nodes: "Nodes", svc: "Services",
   jobs: "Jobs + CronJobs", configs: "Config (ConfigMaps and Secrets)",
   workloads: "Workloads (Deployments, StatefulSets, DaemonSets, ReplicaSets)",
-  pods: "Pods", pvc: "PV / PVC"
+  pods: "Pods", pvc: "PV / PVC", events: "Events"
 };
 
 function cardTitle(scope) { return CARD_SCOPE_TITLES[scope] || "Resources"; }
@@ -1565,6 +1733,7 @@ function cardItemsFromData() {
 }
 
 function openSpecList(scope) {
+  if (scope === "events") { openEvents(); return; }
   relState.tr = { dataset: {} };
   relState.items = [];
   specTitle.textContent = cardTitle(scope);
@@ -1647,6 +1816,82 @@ $("#btnSpecClose").addEventListener("click", closeSpec);
 
 specFilter.addEventListener("input", renderSpecList);
 
+/* ================= events modal ================= */
+var evModal = $("#eventsModal"), evBodyEl = $("#eventsBody"), evTitle = $("#evTitle");
+var evType = $("#evType"), evFilter = $("#evFilter"), evStat = $("#evStat");
+var evState = { items: [] };
+
+function openEvents() {
+  evTitle.textContent = "type=Warning";
+  evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Loading...</td></tr>';
+  evType.value = "";
+  evFilter.value = "";
+  if (evStat) { evStat.textContent = ""; evStat.className = "search-stat"; }
+  evModal.classList.remove("hidden");
+  fetch("/api/overview?scope=events")
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      evState.items = d.items || [];
+      renderEvents();
+    })
+    .catch(function (err) {
+      evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Failed to load events: ' + err + '</td></tr>';
+    });
+}
+
+function renderEvents() {
+  var t = evType.value, q = normStr(evFilter.value);
+  var items = evState.items.filter(function (it) {
+    if (t && it.type !== t) return false;
+    if (q) {
+      var hay = normStr([it.ns, it.name, it.reason, it.message].join(" "));
+      if (hay.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
+  if (evStat) evStat.textContent = items.length + " of " + evState.items.length;
+  if (!items.length) {
+    evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">No events found for the given filters.</td></tr>';
+    return;
+  }
+  var frag = document.createDocumentFragment();
+  items.forEach(function (it) {
+    var tr = document.createElement("tr");
+    var td = function (cls, txt, title) {
+      var x = document.createElement("td");
+      if (cls) x.className = cls;
+      if (title) x.title = title;
+      x.textContent = txt;
+      return x;
+    };
+    var typeBadge = document.createElement("span");
+    typeBadge.className = "badge " + (it.type === "Warning" ? "err" : "ok");
+    typeBadge.textContent = it.type || "-";
+    var tdt = td(null, null);
+    tdt.appendChild(typeBadge);
+    tr.appendChild(td("age", it.age || "-"));
+    tr.appendChild(td("ctx", it.ctx || "-"));
+    tr.appendChild(td("ns", it.ns || "-"));
+    tr.appendChild(td("name", it.name || "-", it.name));
+    tr.appendChild(tdt);
+    tr.appendChild(td("reason", it.reason || "-", it.reason));
+    var msg = td("msg", it.message || "-", it.message);
+    msg.title = it.message || "";
+    tr.appendChild(msg);
+    frag.appendChild(tr);
+  });
+  evBodyEl.innerHTML = "";
+  evBodyEl.appendChild(frag);
+}
+
+function closeEvents() {
+  evModal.classList.add("hidden");
+  evState.items = [];
+}
+$("#btnEvClose").addEventListener("click", closeEvents);
+evType.addEventListener("change", renderEvents);
+evFilter.addEventListener("input", renderEvents);
+
 // Поиск по содержимому текущего манифеста — чисто на клиенте (данные уже
 // загружены в relState.yaml), без единого лишнего вызова kubectl.
 var specSearchTimer = null;
@@ -1680,12 +1925,16 @@ document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
   if (!modal.classList.contains("hidden")) { closeModal(); return; }
   if (!specModal.classList.contains("hidden")) closeSpec();
+  if (typeof closeEvents === "function" && !evModal.classList.contains("hidden")) closeEvents();
 });
 modal.addEventListener("click", function (e) {
   if (e.target === modal) closeModal();
 });
 specModal.addEventListener("click", function (e) {
   if (e.target === specModal) closeSpec();
+});
+if (evModal) evModal.addEventListener("click", function (e) {
+  if (e.target === evModal) closeEvents();
 });
 })();
 </script>
