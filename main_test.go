@@ -1321,7 +1321,30 @@ func TestOverviewScopes(t *testing.T) {
 		{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
 		{"metadata":{"name":"logs","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
 	]}`
-	runSVC := `{"items":[{"metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}]}`
+	runSVC := `{"kind":"List","items":[
+		{"kind":"Service","metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}},
+		{"kind":"Ingress","metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-02T00:00:00Z"}}
+	]}`
+	runNet := `{"kind":"List","items":[
+		{"kind":"ServiceList","items":[
+			{"metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}
+		]},
+		{"kind":"IngressList","items":[
+			{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-02T00:00:00Z"}}
+		]},
+		{"kind":"NetworkPolicyList","items":[
+			{"metadata":{"name":"deny-all","namespace":"prod","creationTimestamp":"2026-01-03T00:00:00Z"}}
+		]},
+		{"kind":"EndpointsList","items":[
+			{"metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-04T00:00:00Z"}}
+		]},
+		{"kind":"EndpointSliceList","items":[
+			{"metadata":{"name":"api-abc","namespace":"ops","creationTimestamp":"2026-01-05T00:00:00Z"}}
+		]},
+		{"kind":"ServiceAccountList","items":[
+			{"metadata":{"name":"default","namespace":"ops","creationTimestamp":"2026-01-06T00:00:00Z"}}
+		]}
+	]}`
 	runNodes := `{"items":[
 		{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
 		{"metadata":{"name":"n2"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}
@@ -1359,6 +1382,8 @@ func TestOverviewScopes(t *testing.T) {
 		switch {
 		case strings.Contains(j, "get persistentvolumeclaims"):
 			return []byte(runPVC), nil
+		case strings.Contains(j, "get services,ingresses,networkpolicies,endpoints,endpointslices,serviceaccounts"):
+			return []byte(runNet), nil
 		case strings.Contains(j, "get services"):
 			return []byte(runSVC), nil
 		case strings.Contains(j, "get nodes"):
@@ -1404,10 +1429,20 @@ func TestOverviewScopes(t *testing.T) {
 		t.Errorf("pvc web/prod не найден: %+v", r.Items)
 	}
 
-	// svc: 2 контекста × 1 сервис.
+	// svc: все Network-манифесты из обоих контекстов (2× service+ingress+…) — 12 элементов.	
 	r = call("svc")
-	if len(r.Items) != 2 || r.Items[0].Kind != "service" || r.Items[0].Ns == "" {
-		t.Errorf("svc items = %+v", r.Items)
+	if len(r.Items) != 12 {
+		t.Fatalf("svc items = %d, want 12", len(r.Items))
+	}
+	kinds := map[string]bool{}
+	for _, it := range r.Items {
+		kinds[it.Kind] = true
+		if it.Ns == "" || it.Ctx == "" {
+			t.Errorf("svc item = %+v", it)
+		}
+	}
+	if !kinds["service"] || !kinds["ingress"] || !kinds["networkpolicy"] {
+		t.Errorf("svc kinds = %v, want service+ingress+networkpolicy", kinds)
 	}
 
 	// nodes: ready/not ready.

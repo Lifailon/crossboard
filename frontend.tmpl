@@ -150,6 +150,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .modal-head h2 span{color:var(--accent);font-family:var(--mono);font-weight:600}
 .modal-tools{margin-left:auto;display:flex;flex-direction:column;align-items:stretch;gap:8px;flex:1 1 auto;min-width:0}
 .mt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mt-row button{flex:0 0 auto}
 .tgl{font-size:12px;padding:6px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--text);white-space:nowrap;font-weight:600}
 .tgl:hover{border-color:var(--warn)}
 .tgl.on{background:var(--warn);border-color:var(--warn);color:#1a1204;box-shadow:0 0 12px rgba(251,191,36,.45)}
@@ -193,7 +194,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .lb-msg mark{background:var(--warn);color:#1a1204;border-radius:3px;padding:0 2px}
 .spec-body mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
 .spec-body .y-k{color:#2dd4bf}
-.spec-body .y-v{color:#c8d6f0}
+  .spec-body .y-v{color:#c29cff}
 .spec-body .y-q{color:#7ee2a8}
 .spec-body .y-n{color:#ffc87a}
 .spec-body .y-b{color:#c29cff}
@@ -338,7 +339,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-window">
     <header class="modal-head">
-      <h2>Live logs <span id="mdCount"></span></h2>
+      <h2><span id="mdCount"></span></h2>
       <div class="modal-tools">
         <div class="mt-row" id="toolsFilters">
           <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
@@ -352,6 +353,9 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
           <label class="sw" title="Ignore case (insensitive)">
             <input type="checkbox" id="insensChk" checked><span class="trk"></span>Case-insensitive
           </label>
+          <label class="sw" title="Show 1 line before/after each match (grep -A 1 -B 1)">
+            <input type="checkbox" id="ctxChk"><span class="trk"></span>Context
+          </label>
         </div>
         <div class="mt-row" id="toolsModes">
           <button id="followChk" class="tgl on" title="Follow new lines">Follow</button>
@@ -361,8 +365,6 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
           <button id="btnClear">Clear</button>
           <button id="btnDownload">Download</button>
           <button id="btnClose">&#10005;</button>
-        </div>
-        <div class="mt-row" id="toolsParams">
           <select id="sinceSel" class="sel" title="Time window: how far back to load log history">
             <option value="">All</option>
             <option value="1h">1h</option>
@@ -387,9 +389,6 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
           </label>
           <label class="sw" title="Show built-in kubectl timestamps">
             <input type="checkbox" id="tsChk" checked><span class="trk"></span>Timestamp
-          </label>
-          <label class="sw" title="Show 1 line before/after each match (grep -A 1 -B 1)">
-            <input type="checkbox" id="ctxChk"><span class="trk"></span>Context
           </label>
           <label class="sw" title="Auto scroll to the newest line">
             <input type="checkbox" id="autoScroll" checked><span class="trk"></span>Auto-scroll
@@ -517,8 +516,20 @@ fNs.addEventListener("change", applyFilters);
 fNode.addEventListener("change", applyFilters);
 fPhase.addEventListener("change", applyFilters);
 selectAll.addEventListener("change", checkAllVisible);
-tbody.addEventListener("change", function (e) {
-  if (e.target.classList.contains("row-check")) updateSel();
+var selAnchor = -1;
+tbody.addEventListener("click", function (e) {
+  var cb = e.target;
+  if (!cb.classList || !cb.classList.contains("row-check")) return;
+  var boxes = tbody.querySelectorAll(".row-check");
+  var idx = -1;
+  for (var i = 0; i < boxes.length; i++) { if (boxes[i] === cb) { idx = i; break; } }
+  if (e.shiftKey && selAnchor >= 0 && idx >= 0) {
+    var state = cb.checked;
+    var lo = Math.min(selAnchor, idx), hi = Math.max(selAnchor, idx);
+    for (var j = lo; j <= hi; j++) boxes[j].checked = state;
+  }
+  selAnchor = idx;
+  updateSel();
 });
 
 /* ---------- sorting ---------- */
@@ -1077,8 +1088,6 @@ function addLine(d, isErr) {
   trackWidth("ctx", d.context);
   trackWidth("ts", d.timestamp || "");
   trackWidth("pod", w.textContent);
-  trackWidth("ts", d.timestamp || "").
-
 
   el.appendChild(b); el.appendChild(t); el.appendChild(w); el.appendChild(m);
   logBody.appendChild(el);
@@ -1182,7 +1191,15 @@ function restartIfStreaming() {
   }
 }
 sinceSel.addEventListener("change", restartIfStreaming);
-followChk.addEventListener("click", restartIfStreaming);
+followChk.addEventListener("click", function () {
+  followChk.classList.toggle("on");
+  if (followOn()) {
+    restartIfStreaming();
+  } else {
+    closeStream();
+    setConn("Stopped", "off");
+  }
+});
 linesSel.addEventListener("change", restartIfStreaming);
 
 btnPause.addEventListener("click", function () {
@@ -1513,7 +1530,7 @@ function openSpec(tr, viaCont) {
 
 var CARD_SCOPE_TITLES = {
   ctx: "Clusters", ns: "Namespaces", nodes: "Nodes", svc: "Services",
-  jobs: "Jobs + CronJobs", configs: "Config maps + Secrets",
+  jobs: "Jobs + CronJobs", configs: "Config (ConfigMaps and Secrets)",
   workloads: "Workloads (Deployments, StatefulSets, DaemonSets, ReplicaSets)",
   pods: "Pods", pvc: "PV / PVC"
 };

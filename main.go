@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -240,6 +241,16 @@ func runKubectl(args ...string) ([]byte, error) {
 	return exec.Command("kubectl", args...).CombinedOutput()
 }
 
+// trimToJSON отбрасывает всё до первой '{' — kubectl может печатать предупреждения
+// (например, "Warning: v1 Endpoints is deprecated") в stderr, которые CombinedOutput
+// склеивает с JSON, ломая парсинг.
+func trimToJSON(out []byte) []byte {
+	if i := bytes.IndexByte(out, '{'); i >= 0 {
+		return out[i:]
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Получение списка контекстов и подов
 // ---------------------------------------------------------------------------
@@ -411,7 +422,7 @@ func nodesContext(ctx string) (ready, total int, cpuTotal, memTotal int64) {
 		return 0, 0, 0, 0
 	}
 	var list kubectlNodeList
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
 		return 0, 0, 0, 0
 	}
 	for _, n := range list.Items {
@@ -496,7 +507,7 @@ func servicesByContext(ctx string) int {
 	var list struct {
 		Items []struct{} `json:"items"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
 		return 0
 	}
 	return len(list.Items)
@@ -526,6 +537,15 @@ func scopeKinds(scope string) []kubeKind {
 			{"daemonset", "daemonsets", "Workload"},
 			{"statefulset", "statefulsets", "Workload"},
 			{"replicaset", "replicasets", "Workload"},
+		}
+	case "svc":
+		return []kubeKind{
+			{"service", "services", "Network"},
+			{"ingress", "ingresses", "Network"},
+			{"networkpolicy", "networkpolicies", "Network"},
+			{"endpoints", "endpoints", "Network"},
+			{"endpointslice", "endpointslices", "Network"},
+			{"serviceaccount", "serviceaccounts", "Network"},
 		}
 	}
 	return nil
@@ -566,7 +586,7 @@ func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
 		return 0, 0
 	}
 	var ml kubectlMixedAll
-	if json.Unmarshal(out, &ml) != nil {
+	if json.Unmarshal(trimToJSON(out), &ml) != nil {
 		return 0, 0
 	}
 	n, done := 0, 0
@@ -1795,15 +1815,13 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		for _, c := range ctxs {
 			add(ObjRef{Kind: "cluster", Name: c, Cat: "Cluster", Ctx: c})
 		}
-	case "ns", "nodes", "svc", "pvc":
+	case "ns", "nodes", "pvc":
 		var kind, plural, cat string
 		switch scope {
 		case "ns":
 			kind, plural, cat = "namespace", "namespaces", "Cluster"
 		case "nodes":
 			kind, plural, cat = "node", "nodes", "Cluster"
-		case "svc":
-			kind, plural, cat = "service", "services", "Network"
 		case "pvc":
 			kind, plural, cat = "persistentvolumeclaim", "persistentvolumeclaims", "Storage"
 		}
@@ -1816,7 +1834,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 					return // RBAC/нет прав — пропускаем, показываем доступное
 				}
 				var list overviewKindList
-				if json.Unmarshal(out, &list) != nil {
+				if json.Unmarshal(trimToJSON(out), &list) != nil {
 					return
 				}
 				for _, it := range list.Items {
@@ -1845,7 +1863,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 				}
 			}(c, kind, plural, cat)
 		}
-	case "jobs", "configs", "workloads":
+	case "jobs", "configs", "workloads", "svc":
 		kinds := scopeKinds(scope)
 		for _, c := range ctxs {
 			wg.Add(1)
@@ -1863,7 +1881,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 					return // RBAC/нет прав — пропускаем, показываем доступное
 				}
 				var ml kubectlMixedAll
-				if json.Unmarshal(out, &ml) != nil {
+				if json.Unmarshal(trimToJSON(out), &ml) != nil {
 					return
 				}
 				for _, raw := range ml.Items {
@@ -1957,7 +1975,7 @@ func handleRelated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var d podObject
-		if e := json.Unmarshal(out, &d); e != nil {
+		if e := json.Unmarshal(trimToJSON(out), &d); e != nil {
 			mu.Lock()
 			err = e
 			mu.Unlock()
@@ -1970,7 +1988,7 @@ func handleRelated(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		if out, e := runKubectlFn("--context", ctx, "get", "services", "-n", ns, "-o", "json"); e == nil {
 			var d svcList
-			if json.Unmarshal(out, &d) == nil {
+			if json.Unmarshal(trimToJSON(out), &d) == nil {
 				svcD = &d
 			}
 		}
@@ -1980,7 +1998,7 @@ func handleRelated(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		if out, e := runKubectlFn("--context", ctx, "get", "ingresses", "-n", ns, "-o", "json"); e == nil {
 			var d ingressList
-			if json.Unmarshal(out, &d) == nil {
+			if json.Unmarshal(trimToJSON(out), &d) == nil {
 				ingD = &d
 			}
 		}
@@ -1990,7 +2008,7 @@ func handleRelated(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		if out, e := runKubectlFn("--context", ctx, "get", "replicasets", "-n", ns, "-o", "json"); e == nil {
 			var d rsList
-			if json.Unmarshal(out, &d) == nil {
+			if json.Unmarshal(trimToJSON(out), &d) == nil {
 				rsD = &d
 			}
 		}
@@ -2230,7 +2248,7 @@ func clusterSnippetYAML(ctx string) (string, error) {
 		return "", fmt.Errorf("kubectl config view: %s", shortOutput(out))
 	}
 	var cfg kubectlConfig
-	if err := json.Unmarshal(out, &cfg); err != nil {
+	if err := json.Unmarshal(trimToJSON(out), &cfg); err != nil {
 		return "", fmt.Errorf("parse kubeconfig: %v", err)
 	}
 
