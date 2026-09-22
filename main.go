@@ -65,18 +65,19 @@ type Stats struct {
 	PodsRunning   int
 	Containers    int
 	Running       int
-	NotReady      int
-	Restarts      int
 	Services      int
+	Jobs          int // jobs + cronjobs во всех кластерах
+	JobsDone      int // успешно завершённые Job (succeeded>0, failed=0)
+	Configs       int // configmaps + secrets во всех кластерах
 	NodeReady     int
 	NodeTotal     int
 	CpuMilli      int64
 	MemBytes      int64
 	CpuTotalMilli int64
 	MemTotalBytes int64
-	PVCInUse      int
+	PVCBound      int
 	PVCTotal      int
-	PVCUsedBytes  int64
+	PVCBoundBytes int64
 	PVCTotalBytes int64
 	PVCOk         int
 }
@@ -223,12 +224,15 @@ type Overview struct {
 	MemBytes      int64 // суммарное использование памяти, байты
 	CpuTotalMilli int64 // суммарные allocatable CPU, м-ядра
 	MemTotalBytes int64 // суммарные allocatable памяти, байты
-	PVCInUse      int   // PVC, смонтированные хотя бы в один под
+	PVCBound      int   // PVC в фазе Bound (привязаны к PV)
 	PVCTotal      int   // всего PVC
-	PVCUsedBytes  int64 // суммарная ёмкость PVC в использовании, байты
-	PVCTotalBytes int64 // суммарная ёмкость всех PVC, байты
+	PVCBoundBytes int64 // сумма ёмкости, выделенной PV из Bound PVC, байты
+	PVCTotalBytes int64 // суммарная запрошенная ёмкость всех PVC, байты
 	PVCOk         int   // контексты, где листинг PVC завершился успешно
 	Services      int   // суммарное число Service во всех кластерах
+	Jobs          int   // суммарное число Jobs + CronJobs
+	JobsDone      int   // суммарное число успешно завершённых Job
+	Configs       int   // суммарное число ConfigMap + Secret
 }
 
 // runKubectl выполняет kubectl с переданными аргументами и возвращает вывод.
@@ -328,8 +332,10 @@ func fetchAllReal() Overview {
 				mu.Unlock()
 				return
 			}
-			pvcInUse, pvcTotal, pvcUsedBytes, pvcTotalBytes, pvcOK := pvcByContext(ctx, mounted)
+			pvcBound, pvcTotal, pvcBoundBytes, pvcTotalBytes, pvcOK := pvcByContext(ctx, mounted)
 			svcCount := servicesByContext(ctx)
+			jobTotal, jobDone := countKubectlKinds(ctx, scopeKinds("jobs"))
+			cfgCount, _ := countKubectlKinds(ctx, scopeKinds("configs"))
 			mu.Lock()
 			pods = append(pods, parsed...)
 			ov.CpuMilli += cpuM
@@ -338,14 +344,17 @@ func fetchAllReal() Overview {
 			ov.NodeTotal += total
 			ov.CpuTotalMilli += cpuT
 			ov.MemTotalBytes += memT
-			ov.PVCInUse += pvcInUse
+			ov.PVCBound += pvcBound
 			ov.PVCTotal += pvcTotal
-			ov.PVCUsedBytes += pvcUsedBytes
+			ov.PVCBoundBytes += pvcBoundBytes
 			ov.PVCTotalBytes += pvcTotalBytes
 			if pvcOK {
 				ov.PVCOk++
 			}
 			ov.Services += svcCount
+			ov.Jobs += jobTotal
+			ov.JobsDone += jobDone
+			ov.Configs += cfgCount
 			ov.AvailCtx++
 			mu.Unlock()
 		}(ctx)
@@ -422,7 +431,8 @@ func nodesContext(ctx string) (ready, total int, cpuTotal, memTotal int64) {
 	return ready, total, cpuTotal, memTotal
 }
 
-// kubectlPVCList — PVC с запрошенной ёмкостью (spec.resources.requests.storage).
+// kubectlPVCList — PVC с запрошенной ёмкостью (spec.resources.requests.storage)
+// и фазой привязки (status.phase) с реально выделенной ёмкостью (status.capacity).
 type kubectlPVCList struct {
 	Items []struct {
 		Metadata struct {
@@ -434,15 +444,20 @@ type kubectlPVCList struct {
 				Requests map[string]string `json:"requests"`
 			} `json:"resources"`
 		} `json:"spec"`
+		Status struct {
+			Phase    string            `json:"phase"`
+			Capacity map[string]string `json:"capacity"`
+		} `json:"status"`
 	} `json:"items"`
 }
 
-// pvcByContext перечисляет PVC в кластере: считает «в использовании» те, что
-// смонтированы хотя бы в один под (ключи "ns|claim"), и суммирует ёмкости.
+// pvcByContext перечисляет PVC в кластере: считает «Bound» (привязаны к PV,
+// статус status.phase) и суммирует ёмкости. Для Bound берётся фактически
+// выделенная PV ёмкость (status.capacity.storage), для остальных — запрос.
 // Один вызов kubectl (get pvc -A -o json), нули при ошибке/нет прав.
 // Если листинг недоступен (RBAC) — ok=false, но число смонтированных томов
-// из манифестов подов всё равно отдаётся (inUse = len(mounted)).
-func pvcByContext(ctx string, mounted map[string]bool) (inUse, total int, usedBytes, totalBytes int64, ok bool) {
+// из манифестов подов всё равно отдаётся (bound = len(mounted)).
+func pvcByContext(ctx string, mounted map[string]bool) (bound, total int, boundBytes, totalBytes int64, ok bool) {
 	out, err := runKubectlFn("--context", ctx, "get", "pvc", "-A", "-o", "json")
 	if err != nil {
 		return len(mounted), 0, 0, 0, false
@@ -453,18 +468,22 @@ func pvcByContext(ctx string, mounted map[string]bool) (inUse, total int, usedBy
 	}
 	for _, p := range list.Items {
 		total++
-		capStr := p.Spec.Resources.Requests["storage"]
-		capB, ok := memBytes(capStr)
-		if !ok {
-			capB = 0
+		req := p.Spec.Resources.Requests["storage"]
+		if reqB, ok := memBytes(req); ok {
+			totalBytes += reqB
 		}
-		totalBytes += capB
-		if mounted != nil && mounted[p.Metadata.Namespace+"|"+p.Metadata.Name] {
-			inUse++
-			usedBytes += capB
+		if p.Status.Phase == "Bound" {
+			bound++
+			alloc := p.Status.Capacity["storage"]
+			if alloc == "" {
+				alloc = req
+			}
+			if capB, ok := memBytes(alloc); ok {
+				boundBytes += capB
+			}
 		}
 	}
-	return inUse, total, usedBytes, totalBytes, true
+	return bound, total, boundBytes, totalBytes, true
 }
 
 // servicesByContext возвращает число Service во всех namespace кластера.
@@ -481,6 +500,125 @@ func servicesByContext(ctx string) int {
 		return 0
 	}
 	return len(list.Items)
+}
+
+// kubeKind — тип ресурса для агрегированных списков (карточки Jobs/Configs).
+type kubeKind struct {
+	kind, plural, cat string
+}
+
+// scopeKinds возвращает типы ресурсов, объединяемые в одну карточку-список.
+func scopeKinds(scope string) []kubeKind {
+	switch scope {
+	case "jobs":
+		return []kubeKind{
+			{"job", "jobs", "Workload"},
+			{"cronjob", "cronjobs", "Workload"},
+		}
+	case "configs":
+		return []kubeKind{
+			{"configmap", "configmaps", "Config"},
+			{"secret", "secrets", "Secret"},
+		}
+	case "workloads":
+		return []kubeKind{
+			{"deployment", "deployments", "Workload"},
+			{"daemonset", "daemonsets", "Workload"},
+			{"statefulset", "statefulsets", "Workload"},
+			{"replicaset", "replicasets", "Workload"},
+		}
+	}
+	return nil
+}
+
+// kubectlMixedAll — результат `kubectl get a,b,c -A -o json`. Ранние версии
+// kubectl возвращают плоский List (объекты с собственным kind), новые — List
+// из вложенных под-List'ов, поэтому элементы разбираются как raw.
+type kubectlMixedAll struct {
+	Items []json.RawMessage `json:"items"`
+}
+
+// mixedObject — под-List или плоский объект внутри kubectlMixedAll.
+type mixedObject struct {
+	Kind     string           `json:"kind"`
+	Items    []overviewObject `json:"items"`
+	Metadata struct {
+		Name              string    `json:"name"`
+		Namespace         string    `json:"namespace"`
+		CreationTimestamp time.Time `json:"creationTimestamp"`
+	} `json:"metadata"`
+}
+
+// countKubectlKinds считает суммарное количество объектов всех указанных типов
+// во всех namespace одного кластера одним вызовом kubectl. Второе возвращаемое
+// значение — число успешно завершённых Job (status.succeeded>0 и failed=0).
+// Ноль при ошибке/нет прав.
+func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
+	if len(ks) == 0 {
+		return 0, 0
+	}
+	plurals := make([]string, len(ks))
+	for i, k := range ks {
+		plurals[i] = k.plural
+	}
+	out, err := runKubectlFn("--context", ctx, "get", strings.Join(plurals, ","), "-A", "-o", "json")
+	if err != nil {
+		return 0, 0
+	}
+	var ml kubectlMixedAll
+	if json.Unmarshal(out, &ml) != nil {
+		return 0, 0
+	}
+	n, done := 0, 0
+	for _, raw := range ml.Items {
+		var e struct {
+			Kind     string            `json:"kind"`
+			Items    []json.RawMessage `json:"items"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Status struct {
+				Succeeded int `json:"succeeded"`
+				Failed    int `json:"failed"`
+			} `json:"status"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		if len(e.Items) > 0 {
+			// Вложенный формат: каждый под-List с собственным kind.
+			kind := strings.ToLower(strings.TrimSuffix(e.Kind, "List"))
+			for _, iraw := range e.Items {
+				n++
+				if kind != "job" {
+					continue
+				}
+				var it struct {
+					Status struct {
+						Succeeded int `json:"succeeded"`
+						Failed    int `json:"failed"`
+					} `json:"status"`
+				}
+				if json.Unmarshal(iraw, &it) == nil && jobSucceeded(it.Status.Succeeded, it.Status.Failed) {
+					done++
+				}
+			}
+			continue
+		}
+		if e.Metadata.Name == "" {
+			continue
+		}
+		// Плоский формат: объект с собственным kind.
+		n++
+		if strings.ToLower(e.Kind) == "job" && jobSucceeded(e.Status.Succeeded, e.Status.Failed) {
+			done++
+		}
+	}
+	return n, done
+}
+
+func jobSucceeded(succeeded, failed int) bool {
+	return succeeded > 0 && failed == 0
 }
 
 // shortOutput возвращает обрезанный первый байтовый вывод команды kubectl
@@ -818,18 +956,19 @@ func collectStats(pods []Pod) Stats {
 			podPhase[key] = p.Phase
 		}
 
+		// Завершённые и упавшие поды (Jobs, завершённые задачи) не считаем
+		// «живыми» контейнерами — они не работают и не запускаются.
+		if p.Phase == "Succeeded" || p.Phase == "Failed" {
+			continue
+		}
 		st.Containers++
-		st.Restarts += p.RestartCount
 		if p.Phase == "Running" {
 			st.Running++
-		}
-		if !p.Ready {
-			st.NotReady++
 		}
 	}
 
 	for _, phase := range podPhase {
-		if phase == "Running" || phase == "Succeeded" {
+		if phase == "Running" {
 			st.PodsRunning++
 		}
 	}
@@ -854,14 +993,14 @@ func gibFrac(use, total int64) string {
 	return fmt.Sprintf("%.2f / %.2f", float64(use)/(1<<30), float64(total)/(1<<30))
 }
 
-// volumeCountValue формирует значение карточки Volume count. Если листинг PVC
-// доступен — «in use / total», иначе только число смонтированных томов
-// (что реально видно из манифестов подов при RBAC-отказе).
-func volumeCountValue(st Stats) string {
+// pvPvcValue формирует значение карточки PV/PVC. Если листинг PVC доступен —
+// «Bound / total», иначе только число томов из манифестов подов
+// (что реально видно при RBAC-отказе).
+func pvPvcValue(st Stats) string {
 	if st.PVCOk > 0 {
-		return frac(st.PVCInUse, st.PVCTotal)
+		return frac(st.PVCBound, st.PVCTotal)
 	}
-	return strconv.Itoa(st.PVCInUse)
+	return strconv.Itoa(st.PVCBound)
 }
 
 func buildCards(st Stats) []Card {
@@ -869,15 +1008,15 @@ func buildCards(st Stats) []Card {
 		{Label: "Clusters", Value: frac(st.AvailCtx, st.Contexts), Hint: "available / total clusters", Color: "accent", Scope: "ctx"},
 		{Label: "Namespaces", Value: strconv.Itoa(st.Namespaces), Hint: "namespaces across clusters", Color: "violet", Scope: "ns"},
 		{Label: "Nodes", Value: frac(st.NodeReady, st.NodeTotal), Hint: "ready / total nodes", Color: "blue", Scope: "nodes"},
-		{Label: "Pods", Value: frac(st.PodsRunning, st.Pods), Hint: "running / total pods", Color: "teal"},
-		{Label: "Containers", Value: frac(st.Running, st.Containers), Hint: "running / total containers", Color: "ok"},
+		{Label: "Pods", Value: frac(st.PodsRunning, st.Pods), Hint: "running / total pods", Color: "teal", Scope: "pods"},
+		{Label: "Containers", Value: frac(st.Running, st.Containers), Hint: "running / active containers (excl. finished jobs)", Color: "ok", Scope: "workloads"},
+		{Label: "Jobs", Value: frac(st.JobsDone, st.Jobs), Hint: "succeeded jobs / total (jobs + cronjobs)", Color: "blue", Scope: "jobs"},
 		{Label: "Services", Value: strconv.Itoa(st.Services), Hint: "services across clusters", Color: "amber", Scope: "svc"},
-		{Label: "Not ready", Value: strconv.Itoa(st.NotReady), Hint: "containers with ready != true", Color: "red", Scope: "notready"},
-		{Label: "Restarts", Value: strconv.Itoa(st.Restarts), Hint: "container restart counts, summed", Color: "violet", Scope: "restarts"},
+		{Label: "Configs", Value: strconv.Itoa(st.Configs), Hint: "configmaps + secrets across clusters", Color: "violet", Scope: "configs"},
 		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "amber"},
 		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "redSoft"},
-		{Label: "PVC count", Value: volumeCountValue(st), Hint: "pvc in use / total", Color: "teal", Scope: "pvc"},
-		{Label: "PVC size", Value: gibFrac(st.PVCUsedBytes, st.PVCTotalBytes) + " GiB", Hint: "PVC capacity mounted by pods / total capacity", Color: "ok", Scope: "pvc"},
+		{Label: "PVC size", Value: gibFrac(st.PVCBoundBytes, st.PVCTotalBytes) + " GiB", Hint: "capacity allocated to PV / total PVC requested", Color: "ok", Scope: "pvc"},
+		{Label: "PV/PVC", Value: pvPvcValue(st), Hint: "bound PV / total PVC", Color: "teal", Scope: "pvc"},
 	}
 }
 
@@ -975,9 +1114,9 @@ func parseLogLine(sel Selection, raw string) LogEvent {
 // Поток логов (SSE). runLogStream мультиплексирует несколько источников.
 // ---------------------------------------------------------------------------
 
-type sourceFunc func(sel Selection, since string, follow bool) (io.ReadCloser, error)
+type sourceFunc func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error)
 
-func runLogStream(ctx context.Context, sels []Selection, since string, follow bool, src sourceFunc) <-chan LogStreamEvent {
+func runLogStream(ctx context.Context, sels []Selection, since string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
 	out := make(chan LogStreamEvent, 128)
 	var wg sync.WaitGroup
 
@@ -985,7 +1124,7 @@ func runLogStream(ctx context.Context, sels []Selection, since string, follow bo
 		wg.Add(1)
 		go func(sel Selection) {
 			defer wg.Done()
-			rc, err := src(sel, since, follow)
+			rc, err := src(sel, since, "", follow, lines)
 			if err != nil {
 				out <- LogStreamEvent{Sel: sel, Err: fmt.Errorf("failed to open stream: %w", err)}
 				return
@@ -1003,18 +1142,27 @@ func runLogStream(ctx context.Context, sels []Selection, since string, follow bo
 				}
 			}()
 
-			sc := bufio.NewScanner(rc)
-			sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-			for sc.Scan() {
-				line := parseLogLine(sel, sc.Text())
-				select {
-				case out <- LogStreamEvent{Sel: sel, Line: line}:
-				case <-ctx.Done():
-					return
+			// Читаем построчно. ReadString сам растягивает буфер, поэтому
+			// очень длинная строка (>>>>1MB) не обрывает поток.
+			rd := bufio.NewReader(rc)
+			for {
+				chunk, err := rd.ReadString('\n')
+				if chunk != "" {
+					chunk = strings.TrimSuffix(chunk, "\n")
+					chunk = strings.TrimSuffix(chunk, "\r")
+					line := parseLogLine(sel, chunk)
+					select {
+					case out <- LogStreamEvent{Sel: sel, Line: line}:
+					case <-ctx.Done():
+						return
+					}
 				}
-			}
-			if err := sc.Err(); err != nil && ctx.Err() == nil {
-				out <- LogStreamEvent{Sel: sel, Err: fmt.Errorf("read failed: %v", err)}
+				if err != nil {
+					if err != io.EOF && ctx.Err() == nil {
+						out <- LogStreamEvent{Sel: sel, Err: fmt.Errorf("read failed: %v", err)}
+					}
+					break
+				}
 			}
 		}(sel)
 	}
@@ -1025,6 +1173,124 @@ func runLogStream(ctx context.Context, sels []Selection, since string, follow bo
 	}()
 	return out
 }
+
+// restartFollowStream — как runLogStream, но при follow=true сам переоткрывает
+// источник, когда kubectl-поток заканчивается (рубят прокси/таймауты ~15-30 c).
+// SSE при этом не рвётся: канал закрывается только когда все источники
+// окончательно умерли или отменился контекст.
+//
+// Возобновление идёт по последней прочитанной метке времени (--since-time),
+// поэтому нет ни дублей, ни потери строк из «окна разрыва».
+func restartFollowStream(ctx context.Context, sels []Selection, since string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
+	out := make(chan LogStreamEvent, 128)
+	var wg sync.WaitGroup
+
+	emit := func(ev LogStreamEvent) bool {
+		select {
+		case out <- ev:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	// sleep возвращает false, если нужно выходить.
+	sleep := func(d time.Duration) bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(d):
+			return true
+		}
+	}
+
+	for _, sel := range sels {
+		wg.Add(1)
+		go func(sel Selection) {
+			defer wg.Done()
+			lastTS := ""
+			errs := 0
+
+			for ctx.Err() == nil {
+				sinceTime, useLines := "", lines
+				if lastTS != "" {
+					sinceTime = lastTS // продолжить без дублей и без дыры
+					useLines = 0
+				}
+				rc, err := src(sel, since, sinceTime, follow, useLines)
+				if err != nil {
+					errs++
+					if errs == 1 {
+						emit(LogStreamEvent{Sel: sel, Err: fmt.Errorf("stream failed (will retry): %w", err)})
+					}
+					if errs >= followMaxErrors {
+						emit(LogStreamEvent{Sel: sel, Err: fmt.Errorf("stream failed %d times, giving up", errs)})
+						return
+					}
+					if !sleep(followRetryDelay) {
+						return
+					}
+					continue
+				}
+				errs = 0
+
+				// Закрыть текущий поток при отмене контекста (клиент ушёл).
+				stop := make(chan struct{})
+				go func(rc io.ReadCloser) {
+					select {
+					case <-ctx.Done():
+						_ = rc.Close()
+					case <-stop:
+					}
+				}(rc)
+
+				rd := bufio.NewReader(rc)
+			readLoop:
+				for {
+					chunk, err := rd.ReadString('\n')
+					if chunk != "" {
+						chunk = strings.TrimSuffix(chunk, "\n")
+						chunk = strings.TrimSuffix(chunk, "\r")
+						line := parseLogLine(sel, chunk)
+						if line.Timestamp != "" {
+							lastTS = line.Timestamp
+						}
+						if !emit(LogStreamEvent{Sel: sel, Line: line}) {
+							close(stop)
+							_ = rc.Close()
+							return
+						}
+					}
+					if err != nil {
+						if err != io.EOF && ctx.Err() == nil {
+							emit(LogStreamEvent{Sel: sel, Err: fmt.Errorf("read failed: %v", err)})
+						}
+						break readLoop
+					}
+				}
+				close(stop)
+				_ = rc.Close()
+
+				if !follow {
+					return // одиночный снимок истории
+				}
+				if !sleep(followRetryDelay) {
+					return
+				}
+			}
+		}(sel)
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
+const (
+	followRetryDelay  = 700 * time.Millisecond // пауза перед переоткрытием стрима
+	followMaxErrors   = 5                      // сколько сбоев подряд терпим
+)
 
 // procReader — объединённый (stdout+stderr) поток из kubectl-процесса,
 // который при закрытии убивает процесс.
@@ -1049,19 +1315,30 @@ func (p *procReader) Close() error {
 	return nil
 }
 
-func openKubectlLogStream(sel Selection, since string, follow bool) (io.ReadCloser, error) {
+// kubectlLogArgs собирает аргументы kubectl logs.
+// Параметры взаимоисключающие: lines>0 → --tail; иначе sinceTime != "" → --since-time;
+// иначе since != "" → --since. Вместе не передаём (kubectl их не сочетает).
+func kubectlLogArgs(sel Selection, since string, sinceTime string, follow bool, lines int) []string {
 	args := []string{"--context", sel.Context, "logs", "-n", sel.Namespace, sel.Pod}
 	if sel.Container != "" {
 		args = append(args, "-c", sel.Container)
 	}
-	if since != "" {
+	if lines > 0 {
+		args = append(args, "--tail", strconv.Itoa(lines))
+	} else if sinceTime != "" {
+		args = append(args, "--since-time", sinceTime)
+	} else if since != "" {
 		args = append(args, "--since", since)
 	}
 	if follow {
 		args = append(args, "-f")
 	}
 	args = append(args, "--timestamps=true")
-	cmd := exec.Command("kubectl", args...)
+	return args
+}
+
+func openKubectlLogStream(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+	cmd := exec.Command("kubectl", kubectlLogArgs(sel, since, sinceTime, follow, lines)...)
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -1117,12 +1394,15 @@ func gatherData() PageData {
 	st.MemBytes = ov.MemBytes
 	st.CpuTotalMilli = ov.CpuTotalMilli
 	st.MemTotalBytes = ov.MemTotalBytes
-	st.PVCInUse = ov.PVCInUse
+	st.PVCBound = ov.PVCBound
 	st.PVCTotal = ov.PVCTotal
-	st.PVCUsedBytes = ov.PVCUsedBytes
+	st.PVCBoundBytes = ov.PVCBoundBytes
 	st.PVCTotalBytes = ov.PVCTotalBytes
 	st.PVCOk = ov.PVCOk
 	st.Services = ov.Services
+	st.Jobs = ov.Jobs
+	st.JobsDone = ov.JobsDone
+	st.Configs = ov.Configs
 	return PageData{
 		Pods:       pods,
 		Contexts:   ctxs,
@@ -1157,29 +1437,60 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	since := r.URL.Query().Get("since")
 	follow := r.URL.Query().Get("follow") != "0"
+	lines := 0
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			lines = n
+		}
+	}
 
 	fmt.Fprint(w, "retry: 2000\n\n")
 	flusher.Flush()
 
-	events := runLogStream(r.Context(), sels, since, follow, openLogStreamFn)
-	for ev := range events {
-		line := ev.Line
-		if ev.Err != nil {
-			line = LogEvent{
-				Context:   ev.Sel.Context,
-				Namespace: ev.Sel.Namespace,
-				Pod:       ev.Sel.Pod,
-				Container: ev.Sel.Container,
-				Error:     ev.Err.Error(),
-			}
-		}
-		b, err := json.Marshal(line)
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
+	var events <-chan LogStreamEvent
+	if follow {
+		events = restartFollowStream(r.Context(), sels, since, follow, lines, openLogStreamFn)
+	} else {
+		events = runLogStream(r.Context(), sels, since, follow, lines, openLogStreamFn)
 	}
+	// Периодический heartbeat (: ping — комментарий SSE), чтобы прокси
+	// не рвали долгую "тихую" сессию follow.
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				goto streamDone
+			}
+			var line LogEvent
+			if ev.Err != nil {
+				line = LogEvent{
+					Context:   ev.Sel.Context,
+					Namespace: ev.Sel.Namespace,
+					Pod:       ev.Sel.Pod,
+					Container: ev.Sel.Container,
+					Error:     ev.Err.Error(),
+				}
+			} else {
+				line = ev.Line
+			}
+			b, err := json.Marshal(line)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+
+streamDone:
 	fmt.Fprint(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
 }
@@ -1232,7 +1543,7 @@ var singularKind = map[string]string{
 	"serviceaccounts":        "serviceaccount",
 }
 
-var catOrder = []string{"Workload", "Network", "Config", "Storage", "Access", "Cluster", "Other"}
+var catOrder = []string{"Workload", "Network", "Config", "Secret", "Storage", "RBAC", "Cluster", "Other"}
 
 func catRank(cat string) int {
 	for i, c := range catOrder {
@@ -1249,12 +1560,14 @@ func objCat(kind string) string {
 		return "Workload"
 	case "service", "ingress", "endpoints", "networkpolicy":
 		return "Network"
-	case "configmap", "secret":
+	case "configmap":
 		return "Config"
+	case "secret":
+		return "Secret"
 	case "persistentvolumeclaim", "persistentvolume", "storageclass":
 		return "Storage"
 	case "serviceaccount", "role", "rolebinding", "clusterrole", "clusterrolebinding":
-		return "Access"
+		return "RBAC"
 	case "namespace", "node":
 		return "Cluster"
 	}
@@ -1412,28 +1725,30 @@ func ageTime(ts time.Time) string {
 	return ageString(ts)
 }
 
-// overviewKindList — подмножество перечисляемого объекта (pvc/svc/ns/node):
-// имя, namespace, время создания, storage-запрос (pvc), conditions/phase (node/ns).
+// overviewObject — подмножество перечисляемого объекта (pvc/svc/ns/node/…):
+// имя, namespace, время создания, storage-запрос, conditions/phase.
+type overviewObject struct {
+	Metadata struct {
+		Name              string    `json:"name"`
+		Namespace         string    `json:"namespace"`
+		CreationTimestamp time.Time `json:"creationTimestamp"`
+	} `json:"metadata"`
+	Spec struct {
+		Resources struct {
+			Requests map[string]string `json:"requests"`
+		} `json:"resources"`
+	} `json:"spec"`
+	Status struct {
+		Phase      string `json:"phase"`
+		Conditions []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"conditions"`
+	} `json:"status"`
+}
+
 type overviewKindList struct {
-	Items []struct {
-		Metadata struct {
-			Name              string    `json:"name"`
-			Namespace         string    `json:"namespace"`
-			CreationTimestamp time.Time `json:"creationTimestamp"`
-		} `json:"metadata"`
-		Spec struct {
-			Resources struct {
-				Requests map[string]string `json:"requests"`
-			} `json:"resources"`
-		} `json:"spec"`
-		Status struct {
-			Phase      string `json:"phase"`
-			Conditions []struct {
-				Type   string `json:"type"`
-				Status string `json:"status"`
-			} `json:"conditions"`
-		} `json:"status"`
-	} `json:"items"`
+	Items []overviewObject `json:"items"`
 }
 
 // handleOverview отдаёт список объектов для кликов по карточкам:
@@ -1529,6 +1844,60 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 					add(ref)
 				}
 			}(c, kind, plural, cat)
+		}
+	case "jobs", "configs", "workloads":
+		kinds := scopeKinds(scope)
+		for _, c := range ctxs {
+			wg.Add(1)
+			go func(c string, kinds []kubeKind) {
+				defer wg.Done()
+				if len(kinds) == 0 {
+					return
+				}
+				plurals := make([]string, len(kinds))
+				for i, k := range kinds {
+					plurals[i] = k.plural
+				}
+				out, e := runKubectlFn("--context", c, "get", strings.Join(plurals, ","), "-A", "-o", "json")
+				if e != nil {
+					return // RBAC/нет прав — пропускаем, показываем доступное
+				}
+				var ml kubectlMixedAll
+				if json.Unmarshal(out, &ml) != nil {
+					return
+				}
+				for _, raw := range ml.Items {
+					var mo mixedObject
+					if json.Unmarshal(raw, &mo) != nil {
+						continue
+					}
+					if len(mo.Items) > 0 {
+						// kubectl обернул каждый тип в под-List («RoleList» → «role»).
+						singular := strings.ToLower(strings.TrimSuffix(mo.Kind, "List"))
+						if singular == "" {
+							continue
+						}
+						for _, it := range mo.Items {
+							add(ObjRef{
+								Kind: singular, Name: it.Metadata.Name, Cat: objCat(singular),
+								Ctx: c, Ns: it.Metadata.Namespace,
+								Age: ageTime(it.Metadata.CreationTimestamp),
+							})
+						}
+						continue
+					}
+					// Плоский List: каждый объект несёт собственный kind.
+					if mo.Metadata.Name == "" {
+						continue
+					}
+					singular := strings.ToLower(mo.Kind)
+					add(ObjRef{
+						Kind: singular, Name: mo.Metadata.Name, Cat: objCat(singular),
+						Ctx: c, Ns: mo.Metadata.Namespace,
+						Age: ageTime(mo.Metadata.CreationTimestamp),
+					})
+				}
+			}(c, kinds)
 		}
 	default:
 		resp.Error = "unknown scope"

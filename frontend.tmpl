@@ -12,6 +12,7 @@
   --accent:#38bdf8; --violet:#a78bfa; --blue:#60a5fa; --teal:#2dd4bf;
   --ok:#34d399; --warn:#fbbf24; --red:#f87171; --amber:#f59e0b;
   --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,'Courier New',monospace;
+  --tsw:29ch;
   --sans:system-ui,-apple-system,'Segoe UI',Roboto,'Inter',sans-serif;
 }
 *{box-sizing:border-box}
@@ -135,6 +136,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .spec-item .sns{flex:0 0 auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
 .spec-item .scx{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--violet);font-family:var(--mono);white-space:nowrap;background:rgba(167,139,250,.1);padding:0 6px;border-radius:999px}
 .spec-item .age{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.spec-item .reason{flex:0 0 auto;margin-left:auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
 .search-stat{font-size:10px;color:var(--dim);font-family:var(--mono);min-height:12px}
 .search-stat.hit{color:var(--accent)}
 .spec-body{flex:1;overflow:auto;padding:14px 18px;margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;color:#cdd9f0;white-space:pre-wrap;word-break:break-word;background:#070c19}
@@ -146,21 +148,47 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .modal-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
 .modal-head h2{margin:0;font-size:16px;white-space:nowrap}
 .modal-head h2 span{color:var(--accent);font-family:var(--mono);font-weight:600}
-.modal-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.modal-tools{margin-left:auto;display:flex;flex-direction:column;align-items:stretch;gap:8px;flex:1 1 auto;min-width:0}
+.mt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tgl{font-size:12px;padding:6px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--text);white-space:nowrap;font-weight:600}
+.tgl:hover{border-color:var(--warn)}
+.tgl.on{background:var(--warn);border-color:var(--warn);color:#1a1204;box-shadow:0 0 12px rgba(251,191,36,.45)}
 .modal-tools input[type=search]{padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--text);font-size:13px;outline:none;width:240px}
 .modal-tools input[type=search]:focus{border-color:var(--accent)}
-.cb{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none}
+.modal-tools input[type=search].re{border-color:var(--red);color:var(--red)}
+.seg{position:relative;display:flex;align-items:center;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--bg2)}
+.seg-btn{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:58px;padding:5px 8px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none;transition:color .15s}
+.seg-btn span{pointer-events:none}
+.seg-btn input{position:absolute;opacity:0;width:0;height:0}
+.seg-btn:has(input:checked){color:#08111f;font-weight:700}
+.seg-thumb{position:absolute;top:1px;bottom:1px;left:0;width:58px;background:var(--accent);border-radius:4px;transition:left .18s ease}
+#modeSeg:has(.seg-btn:nth-child(1) input:checked) .seg-thumb{left:0;border-radius:8px 4px 4px 8px}
+#modeSeg:has(.seg-btn:nth-child(2) input:checked) .seg-thumb{left:58px;border-radius:4px}
+#modeSeg:has(.seg-btn:nth-child(3) input:checked) .seg-thumb{left:116px;border-radius:4px}
+#modeSeg:has(.seg-btn:nth-child(4) input:checked) .seg-thumb{left:174px;border-radius:4px 8px 8px 4px}
+.sw{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw .trk{position:relative;flex:0 0 auto;width:30px;height:17px;border-radius:999px;background:var(--line);transition:background .15s}
+.sw .trk::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#c7d4ea;transition:left .15s,background .15s}
+.sw input:checked + .trk{background:var(--accent)}
+.sw input:checked + .trk::after{left:15px;background:#08111f}
 .conn{font-size:12px;font-weight:600;white-space:nowrap}
 .conn.on{color:var(--ok)} .conn.off{color:var(--red)} .conn.wait{color:var(--warn)}
 .count{font-size:12px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
-.log-body{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#070c19}
+.log-body{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#070c19;--ctxw:9ch;--podw:16ch}
+.log-body.no-wrap{overflow-x:auto}
+.log-body.no-wrap .logline{min-width:max-content}
+.log-body.no-wrap .lb-msg{white-space:pre;word-break:normal}
+.log-body.no-ts .lb-time{display:none}
 .logline{display:flex;gap:10px;padding:1px 14px;border-bottom:1px solid rgba(34,48,79,.18)}
 .logline:hover{background:rgba(56,189,248,.05);cursor:pointer}
 .logline.hide{display:none}
 .logline.logerr{background:rgba(248,113,113,.08)}
-.lb-badge{flex:0 0 auto;min-width:64px;max-width:180px;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis}
-.lb-time{flex:0 0 auto;width:200px;color:var(--dim);font-size:11px;white-space:nowrap}
-.lb-where{flex:0 0 auto;color:var(--teal);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.logline.logerr.ctx{background:rgba(248,113,113,.045)}
+.logline.ctx{background:rgba(56,189,248,.045);opacity:.8}
+.lb-badge{flex:0 0 auto;min-width:var(--ctxw);max-width:var(--ctxw);color:var(--accent);font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.lb-time{flex:0 0 auto;width:var(--tsw);color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden}
+.lb-where{flex:0 0 auto;min-width:var(--podw);max-width:var(--podw);color:var(--teal);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lb-msg{white-space:pre-wrap;word-break:break-word;color:#cdd9f0;flex:1}
 .lb-msg mark{background:var(--warn);color:#1a1204;border-radius:3px;padding:0 2px}
 .spec-body mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
@@ -312,25 +340,61 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
     <header class="modal-head">
       <h2>Live logs <span id="mdCount"></span></h2>
       <div class="modal-tools">
-        <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
-        <label class="cb" title="Case sensitive"><input type="checkbox" id="caseSens"> Aa</label>
-        <label class="cb" title="Auto scroll to bottom"><input type="checkbox" id="autoScroll" checked> Scroll</label>
-        <select id="sinceSel" title="How far back to read logs">
-          <option value="">Since: all</option>
-          <option value="1h">1h</option>
-          <option value="6h">6h</option>
-          <option value="12h">12h</option>
-          <option value="24h" selected>24h</option>
-          <option value="7d">7d</option>
-          <option value="30d">30d</option>
-        </select>
-        <label class="cb" title="Follow new lines"><input type="checkbox" id="followChk" checked> Follow</label>
-        <span class="conn wait" id="connState">-</span>
-        <span class="count" id="lineCount">0</span>
-        <button id="btnPause">Pause</button>
-        <button id="btnClear">Clear</button>
-        <button id="btnDownload">Download</button>
-        <button id="btnClose">&#10005;</button>
+        <div class="mt-row" id="toolsFilters">
+          <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
+          <div class="seg" id="modeSeg" title="Match mode (mutually exclusive): Plain = exact substring, AND = all words, OR = any word, Regex">
+            <label class="seg-btn"><input type="radio" name="logMode" value="text" checked><span>Plain</span></label>
+            <label class="seg-btn"><input type="radio" name="logMode" value="and"><span>AND</span></label>
+            <label class="seg-btn"><input type="radio" name="logMode" value="or"><span>OR</span></label>
+            <label class="seg-btn"><input type="radio" name="logMode" value="regex"><span>Regex</span></label>
+            <span class="seg-thumb"></span>
+          </div>
+          <label class="sw" title="Ignore case (insensitive)">
+            <input type="checkbox" id="insensChk" checked><span class="trk"></span>Case-insensitive
+          </label>
+        </div>
+        <div class="mt-row" id="toolsModes">
+          <button id="followChk" class="tgl on" title="Follow new lines">Follow</button>
+          <button id="btnPause" class="tgl" title="Pause / resume the stream">Pause</button>
+          <span class="conn wait" id="connState">-</span>
+          <span class="count" id="lineCount">0</span>
+          <button id="btnClear">Clear</button>
+          <button id="btnDownload">Download</button>
+          <button id="btnClose">&#10005;</button>
+        </div>
+        <div class="mt-row" id="toolsParams">
+          <select id="sinceSel" class="sel" title="Time window: how far back to load log history">
+            <option value="">All</option>
+            <option value="1h">1h</option>
+            <option value="6h">6h</option>
+            <option value="12h">12h</option>
+            <option value="24h">24h</option>
+            <option value="7d">7d</option>
+            <option value="30d">30d</option>
+          </select>
+          <select id="linesSel" class="sel" title="Number of recent lines to load (All = no limit)">
+            <option value="0">All</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+            <option value="5000">5000</option>
+          </select>
+          <label class="sw" title="Wrap long lines (off = horizontal scroll)">
+            <input type="checkbox" id="wrapChk" checked><span class="trk"></span>Word-wrap
+          </label>
+          <label class="sw" title="Show built-in kubectl timestamps">
+            <input type="checkbox" id="tsChk" checked><span class="trk"></span>Timestamp
+          </label>
+          <label class="sw" title="Show 1 line before/after each match (grep -A 1 -B 1)">
+            <input type="checkbox" id="ctxChk"><span class="trk"></span>Context
+          </label>
+          <label class="sw" title="Auto scroll to the newest line">
+            <input type="checkbox" id="autoScroll" checked><span class="trk"></span>Auto-scroll
+          </label>
+        </div>
       </div>
     </header>
     <div id="logBody" class="log-body"></div>
@@ -376,8 +440,9 @@ var fQ = $("#fQ"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPha
 var selectAll = $("#selectAll"), btnOpen = $("#btnOpen");
 var selFoot = $("#selFoot"), selFootLabel = $("#selFootLabel");
 var connState = $("#connState"), lineCountEl = $("#lineCount"), selInfo = $("#selInfo");
-var logFilter = $("#logFilter"), caseSens = $("#caseSens"), autoScroll = $("#autoScroll");
-var sinceSel = $("#sinceSel"), followChk = $("#followChk");
+var logFilter = $("#logFilter"), insens = $("#insensChk"), ctxChk = $("#ctxChk"), autoScroll = $("#autoScroll");
+var sinceSel = $("#sinceSel"), followChk = $("#followChk"), linesSel = $("#linesSel");
+var wrapChk = $("#wrapChk"), tsChk = $("#tsChk");
 var btnPause = $("#btnPause");
 var specModal = $("#specModal"), specBody = $("#specBody"), specTitle = $("#specTitle");
 var specItems = $("#specItems"), specChips = $("#specChips"), specMeta = $("#specMeta");
@@ -389,6 +454,7 @@ var ES = null;
 var paused = false;
 var totalLines = 0;
 var shownLines = 0;
+var maxCtxW = 9, maxPodW = 16;
 var sortKey = "ctx";
 var sortDir = 1;
 
@@ -695,8 +761,13 @@ function setConn(html, cls) {
 }
 
 function clearLog() {
+  streamRetries = 0;
+  lastKey = null;
   logBody.innerHTML = "";
   totalLines = 0; shownLines = 0;
+  maxCtxW = 9; maxPodW = 16;
+  logBody.style.removeProperty("--ctxw");
+  logBody.style.removeProperty("--podw");
   $("#mdCount").textContent = "";
   setConn("-", "wait");
   lineCountEl.textContent = "0";
@@ -716,6 +787,7 @@ function openModal() {
   modal.classList.remove("hidden");
   paused = false;
   btnPause.textContent = "Pause";
+  btnPause.classList.remove("on");
   startStream();
 }
 
@@ -725,16 +797,30 @@ function closeStream() {
   if (ES) { ES.close(); ES = null; }
 }
 
+var streamRetries = 0;
+var lastKey = null;
+var settling = false;
+var settleTimer = null;
+function followOn() { return followChk.classList.contains("on"); }
+function settleStart() {
+  settling = true;
+  if (settleTimer) clearTimeout(settleTimer);
+  settleTimer = setTimeout(function () { settling = false; }, 1200);
+}
+
 function startStream() {
   closeStream();
   var ids = selectedIDs();
   if (ids.length === 0) { setConn("Nothing selected", "off"); return; }
   setConn("Connecting...", "wait");
+  logBody.scrollTop = 0;
+  settleStart();
   var params = ["since=" + encodeURIComponent(sinceSel.value)];
-  if (!followChk.checked) params.push("follow=0");
+  if (linesSel.value != "0") params.push("lines=" + linesSel.value);
+  if (!followOn()) params.push("follow=0");
   ids.forEach(function (id) { params.push("sel=" + encodeURIComponent(id)); });
   ES = new EventSource("/logs?" + params.join("&"));
-  ES.onopen = function () { setConn("Connected", "on"); };
+  ES.onopen = function () { streamRetries = 0; setConn("Connected", "on"); };
   ES.onmessage = function (e) {
     var d;
     try { d = JSON.parse(e.data); } catch (_) { return; }
@@ -746,17 +832,26 @@ function startStream() {
     else setConn("Network error, reconnecting...", "off");
   };
   ES.addEventListener("done", function () {
-    setConn("Stream finished", "off");
     closeStream();
+    if (followOn() && !paused && !modal.classList.contains("hidden") && streamRetries < 10) {
+      streamRetries++;
+      setConn("Stream ended, restarting...", "wait");
+      // Без сброса вывода: сервер сам переоткрывает kubectl и возобновляет
+      // по --since-time, а этот клиентский перезапуск — лишь запасной путь.
+      setTimeout(startStream, 1500);
+    } else if (!followOn()) {
+      setConn("History loaded (follow off)", "off");
+    } else {
+      setConn("Stream finished", "off");
+    }
   });
 }
 
 function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
-function highlightFrag(text, needle, cs) {
+function highlightFrag(text, re) {
   var f = document.createDocumentFragment();
-  if (!needle) { f.appendChild(document.createTextNode(text)); return f; }
-  var re = new RegExp(escRe(needle), cs ? "g" : "gi");
+  if (!re) { f.appendChild(document.createTextNode(text)); return f; }
   var last = 0, m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) f.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -766,7 +861,60 @@ function highlightFrag(text, needle, cs) {
     last = m.index + m[0].length;
   }
   if (last < text.length) f.appendChild(document.createTextNode(text.slice(last)));
+  re.lastIndex = 0;
   return f;
+}
+
+/* ---------- режимы фильтрации логов ----------
+ * Text: весь запрос — простая подстрока.
+ * AND: в строке должны быть ВСЕ термы (разделены пробелом).
+ * OR: хватает любого терма.
+ * Regex: весь запрос — регулярное выражение.
+ * Insensitive / Context применяются ко всем режимам.
+ */
+
+function logMode() {
+  var r = document.querySelector('input[name="logMode"]:checked');
+  return r ? r.value : "text";
+}
+
+function parseTerms(q, mode) {
+  if (mode === "regex" || mode === "text") { var s = q ? q.trim() : ""; return s ? [s] : []; }
+  return q.trim().split(/\s+/).filter(Boolean);
+}
+
+function isValidRegex(q) {
+  try { new RegExp(q); return true; } catch (_) { return false; }
+}
+
+function lineMatches(raw, q, mode, ins) {
+  if (!q) return true;
+  var terms = parseTerms(q, mode);
+  if (!terms.length) return true;
+  var hay = ins ? raw.toLowerCase() : raw;
+  if (mode === "regex") {
+    try { return new RegExp(terms[0], ins ? "i" : "").test(raw); }
+    catch (_) { return hay.indexOf(terms[0].toLowerCase()) !== -1; }
+  }
+  var test = function (t) { var w = ins ? t.toLowerCase() : t; return hay.indexOf(w) !== -1; };
+  if (mode === "text") return test(terms[0]);
+  if (mode === "or") return terms.some(test);
+  return terms.every(test);
+}
+
+function highlightRe() {
+  var q = logFilter.value, ins = insens.checked;
+  if (!q) return null;
+  var mode = logMode();
+  var terms = parseTerms(q, mode);
+  if (!terms.length) return null;
+  var flags = "g" + (ins ? "i" : "");
+  if (mode === "regex") {
+    try { return new RegExp(terms[0], flags); }
+    catch (_) { return new RegExp(escRe(terms[0]), flags); }
+  }
+  if (mode === "text") return new RegExp(escRe(terms[0]), flags);
+  return new RegExp(terms.map(escRe).join("|"), flags);
 }
 
 /* ---------- Лёгкая подсветка YAML-синтаксиса ----------
@@ -890,14 +1038,31 @@ function yamlHighlight(src, needle) {
 
 function renderMsg(el, raw) {
   el.textContent = "";
-  el.appendChild(highlightFrag(raw, logFilter.value, caseSens.checked));
+  el.appendChild(highlightFrag(raw, highlightRe()));
+}
+
+// Подгонка ширины колонок лога под самый длинный контекст/под текущей
+// выборки (в ch, моно-шрифт). Контекст не обрезается зря, как было.
+function trackWidth(col, text) {
+  var len = (text || "").length + 1;
+  if (col === "ctx") {
+    if (len > maxCtxW) { maxCtxW = len; logBody.style.setProperty("--ctxw", maxCtxW + "ch"); }
+  } else {
+    if (len > maxPodW) { maxPodW = len; logBody.style.setProperty("--podw", maxPodW + "ch"); }
+  }
 }
 
 function addLine(d, isErr) {
+  // Защита от дубля на границе переподключения: kubectl --since-time повторно
+  // отдаёт строку с последней меткой. Идентичную соседнюю строку пропускаем.
+  var key = d.context + "|" + d.namespace + "|" + d.pod + "|" + (d.container || "") +
+            "|" + (d.timestamp || "") + "|" + (d.message || d.error || "");
+  if (key === lastKey) return;
+  lastKey = key;
+
   var el = document.createElement("div");
   el.className = "logline" + (isErr ? " logerr" : "");
   el.dataset.raw = d.message || d.error || "";
-  el.dataset.hay = el.dataset.raw.toLowerCase();
 
   var b = document.createElement("span");
   b.className = "lb-badge"; b.textContent = d.context; b.title = (d.context || "") + "/" + (d.namespace || "");
@@ -909,14 +1074,53 @@ function addLine(d, isErr) {
   var m = document.createElement("span");
   m.className = "lb-msg";
 
+  trackWidth("ctx", d.context);
+  trackWidth("ts", d.timestamp || "");
+  trackWidth("pod", w.textContent);
+  trackWidth("ts", d.timestamp || "").
+
+
   el.appendChild(b); el.appendChild(t); el.appendChild(w); el.appendChild(m);
   logBody.appendChild(el);
   totalLines++;
 
   var q = logFilter.value;
-  var ok = !q || (caseSens.checked ? el.dataset.raw.indexOf(q) !== -1 : el.dataset.hay.indexOf(q.toLowerCase()) !== -1);
-  if (ok) { shownLines++; renderMsg(m, el.dataset.raw); }
-  else { el.classList.add("hide"); }
+  var mode = logMode();
+  var ins = insens.checked;
+  var ctx = ctxChk.checked;
+  var ok = lineMatches(el.dataset.raw, q, mode, ins);
+  el.dataset.match = ok ? "1" : "0";
+
+  var shown = ok;
+  if (!shown && ctx) {
+    // Контекстный вывод (grep -B 1): предыдущая строка — совпадение.
+    // Следующая разкроет себя сама, когда придёт.
+    var prev = el.previousElementSibling;
+    if (prev && prev.classList.contains("logline") && prev.dataset.match === "1") {
+      shown = true;
+      el.classList.add("ctx");
+    }
+  }
+  if (shown) {
+    shownLines++;
+    renderMsg(m, el.dataset.raw);
+  } else {
+    el.classList.add("hide");
+  }
+
+  // Текущая строка — совпадение: скрытая несовпавшая предыдущая становится
+  // контекстной (grep -A 1) и разворачивается. Контекст не размножается дальше,
+  // т.к. раскрытие затрагивает только соседей настоящего совпадения.
+  if (ctx && ok) {
+    var p = el.previousElementSibling;
+    if (p && p.classList.contains("logline") && p.dataset.match === "0" &&
+        p.classList.contains("hide")) {
+      p.classList.remove("hide");
+      p.classList.add("ctx");
+      renderMsg(p.querySelector(".lb-msg"), p.dataset.raw);
+      shownLines++;
+    }
+  }
 
   el.addEventListener("click", function () {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -925,23 +1129,43 @@ function addLine(d, isErr) {
   });
 
   lineCountEl.textContent = shownLines + " / " + totalLines;
-  if (autoScroll.checked) logBody.scrollTop = logBody.scrollHeight;
+  if (autoScroll.checked && !settling) logBody.scrollTop = logBody.scrollHeight;
 }
 
 function applyLogFilter() {
   var q = logFilter.value;
-  var cs = caseSens.checked;
-  var low = q.toLowerCase();
+  var mode = logMode();
+  var ins = insens.checked;
+  var ctx = ctxChk.checked;
+  var els = logBody.querySelectorAll(".logline");
+  var i, n = els.length;
+  var match = new Array(n);
+  for (i = 0; i < n; i++) {
+    match[i] = lineMatches(els[i].dataset.raw, q, mode, ins);
+    els[i].dataset.match = match[i] ? "1" : "0";
+    els[i].classList.remove("ctx");
+  }
   shownLines = 0;
-  logBody.querySelectorAll(".logline").forEach(function (el) {
-    var ok = !q || (cs ? el.dataset.raw.indexOf(q) !== -1 : el.dataset.hay.indexOf(low) !== -1);
-    el.classList.toggle("hide", !ok);
-    if (ok) { shownLines++; renderMsg(el.querySelector(".lb-msg"), el.dataset.raw); }
-  });
+  for (i = 0; i < n; i++) {
+    var ok = match[i] || (ctx && ((i > 0 && match[i - 1]) || (i < n - 1 && match[i + 1])));
+    els[i].classList.toggle("hide", !ok);
+    if (ok) {
+      shownLines++;
+      els[i].classList.toggle("ctx", !match[i]);
+      renderMsg(els[i].querySelector(".lb-msg"), els[i].dataset.raw);
+    } else {
+      els[i].querySelector(".lb-msg").textContent = "";
+    }
+  }
   lineCountEl.textContent = shownLines + " / " + totalLines;
+  logFilter.classList.toggle("re", mode === "regex" && q !== "" && !isValidRegex(q));
 }
 logFilter.addEventListener("input", applyLogFilter);
-caseSens.addEventListener("change", applyLogFilter);
+insens.addEventListener("change", applyLogFilter);
+ctxChk.addEventListener("change", applyLogFilter);
+document.querySelectorAll('input[name="logMode"]').forEach(function (r) {
+  r.addEventListener("change", applyLogFilter);
+});
 
 autoScroll.addEventListener("change", function () {
   if (autoScroll.checked) logBody.scrollTop = logBody.scrollHeight;
@@ -952,25 +1176,39 @@ logBody.addEventListener("scroll", function () {
 });
 
 function restartIfStreaming() {
-  if (!paused && !modal.classList.contains("hidden")) startStream();
+  if (!paused && !modal.classList.contains("hidden")) {
+    clearLog();
+    startStream();
+  }
 }
 sinceSel.addEventListener("change", restartIfStreaming);
-followChk.addEventListener("change", restartIfStreaming);
+followChk.addEventListener("click", restartIfStreaming);
+linesSel.addEventListener("change", restartIfStreaming);
 
 btnPause.addEventListener("click", function () {
   if (paused) {
     paused = false; btnPause.textContent = "Pause";
+    btnPause.classList.remove("on");
     startStream();
   } else {
     paused = true; btnPause.textContent = "Resume";
+    btnPause.classList.add("on");
     closeStream();
     setConn("Paused", "wait");
   }
 });
 
+wrapChk.addEventListener("change", function () {
+  logBody.classList.toggle("no-wrap", !wrapChk.checked);
+});
+tsChk.addEventListener("change", function () {
+  logBody.classList.toggle("no-ts", !tsChk.checked);
+});
+
 $("#btnClear").addEventListener("click", function () {
   logBody.innerHTML = "";
   totalLines = 0; shownLines = 0;
+  lastKey = null;
   lineCountEl.textContent = "0";
   if (!paused) startStream();
 });
@@ -1006,8 +1244,24 @@ $("#btnClose").addEventListener("click", closeModal);
 
 /* ================= resource browser ================= */
 
-var CAT_ORDER = ["Workload", "Network", "Config", "Storage", "Access", "Cluster", "Other"];
-var relState = { tr: null, items: [], cats: {}, loaded: null, yaml: "", needle: "" };
+// Динамический фильтр по конкретному Kind (не по типу-категории): чипы
+// строятся из того, что реально встретилось в текущем списке ресурсов.
+var KIND_LABELS = {
+  pod: "Pod", deployment: "Deployment", statefulset: "StatefulSet",
+  daemonset: "DaemonSet", replicaset: "ReplicaSet", job: "Job", cronjob: "CronJob",
+  service: "Service", ingress: "Ingress", networkpolicy: "NetworkPolicy",
+  configmap: "ConfigMap", secret: "Secret",
+  persistentvolumeclaim: "PersistentVolumeClaim", persistentvolume: "PersistentVolume",
+  serviceaccount: "ServiceAccount", role: "Role", rolebinding: "RoleBinding",
+  clusterrole: "ClusterRole", clusterrolebinding: "ClusterRoleBinding",
+  namespace: "Namespace", node: "Node", storageclass: "StorageClass",
+  horizontalpodautoscaler: "HorizontalPodAutoscaler", poddisruptionbudget: "PodDisruptionBudget",
+  endpoints: "Endpoints", endpointslice: "EndpointSlice",
+  gateway: "Gateway", virtualservice: "VirtualService", destinationrule: "DestinationRule",
+  certificate: "Certificate", issuer: "Issuer", clusterissuer: "ClusterIssuer"
+};
+function kindLabel(k) { return KIND_LABELS[k] || (k.charAt(0).toUpperCase() + k.slice(1)); }
+var relState = { tr: null, items: [], kinds: {}, loaded: null, yaml: "", needle: "" };
 
 function normStr(s) { return (s || "").toLowerCase(); }
 
@@ -1076,22 +1330,24 @@ function buildSpecChips() {
   var counts = {};
   relState.items.forEach(function (it) {
     if (!matchRel(it, q)) return;
-    counts[it.cat] = (counts[it.cat] || 0) + 1;
+    counts[it.kind] = (counts[it.kind] || 0) + 1;
   });
-  CAT_ORDER.forEach(function (c) {
-    if (!counts[c]) return;
+  Object.keys(counts).sort(function (a, b) {
+    var la = kindLabel(a), lb = kindLabel(b);
+    return la < lb ? -1 : la > lb ? 1 : 0;
+  }).forEach(function (k) {
     var chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "chip" + (relState.cats[c] ? " on" : "");
+    chip.className = "chip" + (relState.kinds[k] ? " on" : "");
     var lbl = document.createElement("span");
-    lbl.textContent = c;
+    lbl.textContent = kindLabel(k);
     var n = document.createElement("span");
     n.className = "n";
-    n.textContent = counts[c];
+    n.textContent = counts[k];
     chip.appendChild(lbl); chip.appendChild(n);
     chip.addEventListener("click", function () {
-      if (relState.cats[c]) delete relState.cats[c];
-      else relState.cats[c] = true;
+      if (relState.kinds[k]) delete relState.kinds[k];
+      else relState.kinds[k] = true;
       renderSpecList();
     });
     specChips.appendChild(chip);
@@ -1102,18 +1358,24 @@ function renderSpecList() {
   buildSpecChips();
   var q = normStr(specFilter.value);
   specItems.innerHTML = "";
-  var cats = Object.keys(relState.cats);
+  var kinds = Object.keys(relState.kinds);
+  var groups = {}, order = [];
+  relState.items.forEach(function (it) {
+    if (kinds.length && !relState.kinds[it.kind]) return;
+    if (!matchRel(it, q)) return;
+    if (!groups[it.kind]) { groups[it.kind] = []; order.push(it.kind); }
+    groups[it.kind].push(it);
+  });
+  order.sort(function (a, b) {
+    var la = kindLabel(a), lb = kindLabel(b);
+    return la < lb ? -1 : la > lb ? 1 : 0;
+  });
   var shown = 0;
-  CAT_ORDER.forEach(function (c) {
-    if (cats.length && !relState.cats[c]) return;
-    var list = relState.items.filter(function (it) {
-      if (it.cat !== c) return false;
-      return matchRel(it, q);
-    });
-    if (!list.length) return;
+  order.forEach(function (k) {
+    var list = groups[k];
     var catEl = document.createElement("div");
     catEl.className = "spec-cat";
-    catEl.textContent = c + " (" + list.length + ")";
+    catEl.textContent = kindLabel(k) + " (" + list.length + ")";
     specItems.appendChild(catEl);
     list.forEach(function (it) {
       var b = document.createElement("button");
@@ -1138,6 +1400,11 @@ function renderSpecList() {
         var cy = document.createElement("span");
         cy.className = "scx"; cy.textContent = it.ctx;
         b.appendChild(cy);
+      }
+      if (it.reason) {
+        var rs = document.createElement("span");
+        rs.className = "reason"; rs.textContent = it.reason;
+        b.appendChild(rs);
       }
       if (it.age) {
         var ag = document.createElement("span");
@@ -1185,7 +1452,7 @@ function updateSearchStat() {
 }
 
 function resetSpecModal() {
-  relState.cats = {};
+  relState.kinds = {};
   relState.loaded = null;
   relState.yaml = "";
   relState.needle = "";
@@ -1198,7 +1465,7 @@ function resetSpecModal() {
   specMeta.innerHTML = "";
 }
 
-function enterSpec(items, errorText) {
+function enterSpec(items, errorText, defaultKind) {
   if (!items || !items.length) {
     var msg = errorText || "No related resources found.";
     var empty = document.createElement("div");
@@ -1210,11 +1477,15 @@ function enterSpec(items, errorText) {
     return;
   }
   relState.items = items;
+  // Клик по строке пода — показываем манифест самого пода; клик по контейнеру
+  // (или список карточки) — его workload-цепочку (deployment и т.п.).
+  var dflt = items.filter(function (it) { return it.kind === defaultKind; })[0] || items[0];
+  relState.loaded = { kind: dflt.kind, name: dflt.name };
   renderSpecList();
-  loadSpec(items[0]);
+  loadSpec(dflt);
 }
 
-function openSpec(tr) {
+function openSpec(tr, viaCont) {
   specTitle.textContent = tr.dataset.pod || "";
   relState.tr = tr;
   relState.items = [];
@@ -1232,7 +1503,7 @@ function openSpec(tr) {
     .then(function (r) { return r.json(); })
     .then(function (d) {
       renderSpecMeta(tr, d);
-      enterSpec(d.items, d.error);
+      enterSpec(d.items, d.error, viaCont ? "deployment" : "pod");
     })
     .catch(function (err) {
       specBody.textContent = "Failed to load resource list: " + err;
@@ -1242,47 +1513,38 @@ function openSpec(tr) {
 
 var CARD_SCOPE_TITLES = {
   ctx: "Clusters", ns: "Namespaces", nodes: "Nodes", svc: "Services",
-  pvc: "Persistentvolumeclaims", notready: "Not ready", restarts: "Restarts"
+  jobs: "Jobs + CronJobs", configs: "Config maps + Secrets",
+  workloads: "Workloads (Deployments, StatefulSets, DaemonSets, ReplicaSets)",
+  pods: "Pods", pvc: "PV / PVC"
 };
 
 function cardTitle(scope) { return CARD_SCOPE_TITLES[scope] || "Resources"; }
 
-// Список подов для клиентских карточек Not ready / Restarts — собирается из
-// уже загруженных данных (/api/pods), без лишних запросов.
-function cardItemsFromPods(scope) {
-  var d = window.__kubelogsData || {};
-  var pods = d.pods || [];
+function sortByCtxNsName(arr) {
+  arr.sort(function (a, b) {
+    var cmp = (a.ctx || "").localeCompare(b.ctx || "");
+    if (cmp) return cmp;
+    cmp = (a.ns || "").localeCompare(b.ns || "");
+    if (cmp) return cmp;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+  return arr;
+}
+
+// Список подов собирается из уже загруженных данных страницы (без kubectl).
+function cardItemsFromData() {
+  var rows = (window.__kubelogsData && window.__kubelogsData.pods) || [];
   var map = {}, order = [];
-  pods.forEach(function (p) {
+  rows.forEach(function (p) {
     var key = p.context + "|" + p.namespace + "|" + p.name;
-    var e = map[key];
-    if (!e) {
-      e = map[key] = { ctx: p.context, ns: p.namespace, name: p.name, bad: 0, rests: 0, conts: [] };
-      order.push(key);
-    }
-    if (!p.ready) { e.bad++; e.conts.push(p.container + " not ready"); }
-    if ((p.restarts || 0) > e.rests) e.rests = p.restarts || 0;
+    if (!map[key]) { map[key] = p; order.push(key); }
   });
-  var items = [];
-  order.forEach(function (key) {
-    var e = map[key];
-    var hit = scope === "notready" ? e.bad > 0 : e.rests > 0;
-    if (!hit) return;
-    items.push({
-      kind: "pod", name: e.name, cat: "Workload",
-      reason: scope === "notready" ? e.conts.join(", ")
-                                 : e.rests + (e.rests === 1 ? " restart" : " restarts"),
-      ctx: e.ctx, ns: e.ns
-    });
-  });
-  items.sort(function (a, b) {
-    if (a.ctx !== b.ctx) return a.ctx < b.ctx ? -1 : 1;
-    if (a.ns !== b.ns) return a.ns < b.ns ? -1 : 1;
-    if (a.name < b.name) return -1;
-    if (a.name > b.name) return 1;
-    return 0;
-  });
-  return items;
+  return sortByCtxNsName(order.map(function (k) {
+    var p = map[k];
+    return { kind: "pod", name: p.name,
+             reason: p.phase || "", age: p.age || "",
+             ctx: p.context, ns: p.namespace };
+  }));
 }
 
 function openSpecList(scope) {
@@ -1291,15 +1553,31 @@ function openSpecList(scope) {
   specTitle.textContent = cardTitle(scope);
   resetSpecModal();
   specModal.classList.remove("hidden");
-  if (scope === "notready" || scope === "restarts") {
-    enterSpec(cardItemsFromPods(scope), "");
+  if (scope === "pods") {
+    var items = cardItemsFromData();
+    if (!items.length) {
+      specBody.textContent = "Loading...";
+      specBody.className = "spec-body";
+      fetch("/api/pods")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          window.__kubelogsData = d;
+          enterSpec(cardItemsFromData(), "No pod data loaded yet. Refresh the page.", "pod");
+        })
+        .catch(function (err) {
+          specBody.textContent = "Failed to load pod data: " + err;
+          specBody.className = "spec-body error";
+        });
+      return;
+    }
+    enterSpec(items, "No pod data loaded yet. Refresh the page.", "pod");
     return;
   }
   specBody.textContent = "Loading...";
   specBody.className = "spec-body";
   fetch("/api/overview?scope=" + encodeURIComponent(scope))
     .then(function (r) { return r.json(); })
-    .then(function (d) { enterSpec(d.items, d.error); })
+    .then(function (d) { enterSpec(d.items, d.error, ""); })
     .catch(function (err) {
       specBody.textContent = "Failed to load resource list: " + err;
       specBody.className = "spec-body error";
@@ -1346,7 +1624,7 @@ function closeSpec() {
   specBody.textContent = "Loading...";
   specBody.className = "spec-body";
   specTitle.textContent = "";
-  relState = { tr: null, items: [], cats: {}, loaded: null, yaml: "", needle: "" };
+  relState = { tr: null, items: [], kinds: {}, loaded: null, yaml: "", needle: "" };
 }
 $("#btnSpecClose").addEventListener("click", closeSpec);
 
@@ -1366,7 +1644,9 @@ specSearch.addEventListener("input", function () {
 tbody.addEventListener("click", function (e) {
   if (e.target.closest && e.target.closest("input,select,button,a,label")) return;
   var tr = e.target.closest ? e.target.closest("tr") : null;
-  if (tr && tr.dataset && tr.dataset.ix) openSpec(tr);
+  if (!tr || !tr.dataset || !tr.dataset.ix) return;
+  var viaCont = !!(e.target.closest && e.target.closest("td.cont"));
+  openSpec(tr, viaCont);
 });
 
 function bindCards(host) {

@@ -280,17 +280,15 @@ func TestCollectStats(t *testing.T) {
 	if st.Pods != 5 {
 		t.Errorf("Pods = %d, want 5", st.Pods)
 	}
-	if st.Containers != 6 {
-		t.Errorf("Containers = %d, want 6", st.Containers)
+	if st.PodsRunning != 3 {
+		t.Errorf("PodsRunning = %d, want 3 (только Running)", st.PodsRunning)
+	}
+	// Завершённый Job (Succeeded) в «активные» контейнеры не входит.
+	if st.Containers != 5 {
+		t.Errorf("Containers = %d, want 5 (без Succeeded)", st.Containers)
 	}
 	if st.Running != 4 {
 		t.Errorf("Running = %d, want 4 (by phase, includes d/z)", st.Running)
-	}
-	if st.NotReady != 3 {
-		t.Errorf("NotReady = %d, want 3", st.NotReady)
-	}
-	if st.Restarts != 16 {
-		t.Errorf("Restarts = %d, want 16", st.Restarts)
 	}
 }
 
@@ -302,22 +300,24 @@ func TestBuildCards(t *testing.T) {
 		Pods: 10, PodsRunning: 8,
 		Containers: 20, Running: 15,
 		Services: 7,
+		Jobs:     4,
+		JobsDone: 3,
+		Configs:  6,
 		CpuMilli: 1200, CpuTotalMilli: 4000,
 		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
-		PVCInUse: 2, PVCTotal: 5, PVCUsedBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
-		NotReady: 3, Restarts: 16,
+		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
 	})
 	if len(cards) != 12 {
 		t.Fatalf("len(cards) = %d, want 12", len(cards))
 	}
-	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Services", "Not ready", "Restarts"}
-	row2 := []string{"CPU", "Memory", "PVC count", "PVC size"}
+	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Services", "Configs"}
+	row2 := []string{"CPU", "Memory", "PVC size", "PV/PVC"}
 	for i, l := range append(row1, row2...) {
 		if cards[i].Label != l {
 			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
 		}
 	}
-	scopes := []string{"ctx", "ns", "nodes", "", "", "svc", "notready", "restarts", "", "", "pvc", "pvc"}
+	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "svc", "configs", "", "", "pvc", "pvc"}
 	for i, s := range scopes {
 		if cards[i].Scope != s {
 			t.Errorf("cards[%d].Scope = %q, want %q (%s)", i, cards[i].Scope, s, cards[i].Label)
@@ -326,11 +326,11 @@ func TestBuildCards(t *testing.T) {
 	if cards[0].Value != "2/3" || cards[2].Value != "4/5" {
 		t.Errorf("clusters/nodes = %+v", cards)
 	}
-	if cards[3].Value != "8/10" || cards[4].Value != "15/20" || cards[5].Value != "7" {
-		t.Errorf("pods/containers/services = %+v", cards[:6])
+	if cards[3].Value != "8/10" || cards[4].Value != "15/20" || cards[5].Value != "3/4" {
+		t.Errorf("pods/containers/jobs = %+v", cards[:6])
 	}
-	if cards[6].Value != "3" || cards[7].Value != "16" {
-		t.Errorf("not ready/restarts = %+v", cards[6:8])
+	if cards[6].Value != "7" || cards[7].Value != "6" {
+		t.Errorf("services/configs cards = %+v", cards[6:8])
 	}
 	if cards[8].Value != "1.20 / 4.00" || cards[8].Hint != "cores in use / allocatable" {
 		t.Errorf("cpu card: %+v", cards[8])
@@ -338,23 +338,61 @@ func TestBuildCards(t *testing.T) {
 	if cards[9].Value != "2.00 / 4.00 GiB" {
 		t.Errorf("memory card: %+v", cards[9])
 	}
-	if cards[10].Value != "2/5" {
-		t.Errorf("pvc count card: %+v", cards[10])
+	if cards[10].Value != "1.00 / 2.00 GiB" || cards[10].Label != "PVC size" {
+		t.Errorf("pvc size card: %+v", cards[10])
 	}
-	if cards[11].Value != "1.00 / 2.00 GiB" || cards[11].Label != "PVC size" {
-		t.Errorf("pvc size card: %+v", cards[11])
+	if cards[11].Value != "2/5" || cards[11].Label != "PV/PVC" {
+		t.Errorf("pv/pvc card: %+v", cards[11])
 	}
 }
 
-func TestVolumeCountValue(t *testing.T) {
-	if got := volumeCountValue(Stats{PVCOk: 1, PVCInUse: 2, PVCTotal: 5}); got != "2/5" {
-		t.Errorf("volumeCountValue ok = %q, want 2/5", got)
+func TestPVPvcValue(t *testing.T) {
+	if got := pvPvcValue(Stats{PVCOk: 1, PVCBound: 2, PVCTotal: 5}); got != "2/5" {
+		t.Errorf("pvPvcValue ok = %q, want 2/5", got)
 	}
-	if got := volumeCountValue(Stats{PVCInUse: 3}); got != "3" {
-		t.Errorf("volumeCountValue fallback = %q, want 3", got)
+	if got := pvPvcValue(Stats{PVCBound: 3}); got != "3" {
+		t.Errorf("pvPvcValue fallback = %q, want 3", got)
 	}
-	if got := volumeCountValue(Stats{}); got != "0" {
-		t.Errorf("volumeCountValue empty = %q, want 0", got)
+	if got := pvPvcValue(Stats{}); got != "0" {
+		t.Errorf("pvPvcValue empty = %q, want 0", got)
+	}
+}
+
+func TestCountKubectlKinds(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") != "--context c1 get jobs,cronjobs -A -o json" {
+			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+		}
+		return []byte(`{"items":[
+			{"kind":"Job","metadata":{"name":"j1"},"status":{"succeeded":1,"failed":0}},
+			{"kind":"Job","metadata":{"name":"j2"},"status":{"succeeded":0,"failed":0}},
+			{"kind":"CronJob","metadata":{"name":"cj1"}}
+		]}`), nil
+	}
+	if n, d := countKubectlKinds("c1", scopeKinds("jobs")); n != 3 || d != 1 {
+		t.Errorf("flat count = %d (done %d), want 3/1", n, d)
+	}
+
+	// Вложенный формат (новые kubectl): под-List'ы с собственным kind.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte(`{"items":[
+			{"kind":"ConfigMapList","items":[{"metadata":{"name":"c1"}},{"metadata":{"name":"c2"}}]},
+			{"kind":"SecretList","items":[{"metadata":{"name":"s1"}}]}
+		]}`), nil
+	}
+	if n, _ := countKubectlKinds("c1", scopeKinds("configs")); n != 3 {
+		t.Errorf("nested count = %d, want 3", n)
+	}
+
+	// RBAC-отказ — ноль.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte("Forbidden"), fmt.Errorf("exit status 1")
+	}
+	if n, d := countKubectlKinds("c1", scopeKinds("configs")); n != 0 || d != 0 {
+		t.Errorf("count on RBAC error = %d/%d, want 0/0", n, d)
 	}
 }
 
@@ -443,7 +481,7 @@ func TestParseLogLineEmpty(t *testing.T) {
 
 // fakeSource возвращает фиксированные строки для заданного пода.
 func fakeSource(linesByPod map[string]string) sourceFunc {
-	return func(sel Selection, _ string, _ bool) (io.ReadCloser, error) {
+	return func(sel Selection, _ string, _ string, _ bool, _ int) (io.ReadCloser, error) {
 		text, ok := linesByPod[sel.Pod]
 		if !ok {
 			return nil, fmt.Errorf("no source for %s", sel.Pod)
@@ -463,7 +501,7 @@ func TestRunLogStreamMultiplexesSources(t *testing.T) {
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "nsA", Pod: "podA", Container: "ctA"},
 		{Context: "c2", Namespace: "nsB", Pod: "podB", Container: "ctB"},
-	}, "1h", true, src)
+	}, "1h", true, 200, src)
 
 	var errs, lines []LogStreamEvent
 	for ev := range events {
@@ -514,7 +552,7 @@ func TestRunLogStreamSourceError(t *testing.T) {
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
 		{Context: "c2", Namespace: "ns", Pod: "podMISSING", Container: "ctB"},
-	}, "", false, src)
+	}, "", false, 0, src)
 
 	var errs int
 	var lines int
@@ -560,7 +598,7 @@ func (b *blockRC) Close() error {
 
 func TestRunLogStreamKillsOnCancel(t *testing.T) {
 	var rc *blockRC
-	src := func(sel Selection, since string, follow bool) (io.ReadCloser, error) {
+	src := func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
 		rc = &blockRC{readC: make(chan struct{})}
 		return rc, nil
 	}
@@ -569,7 +607,7 @@ func TestRunLogStreamKillsOnCancel(t *testing.T) {
 
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
-	}, "1h", true, src)
+	}, "1h", true, 200, src)
 
 	for ev := range events {
 		if ev.Err == nil && ev.Line.Message != "" {
@@ -584,6 +622,145 @@ func TestRunLogStreamKillsOnCancel(t *testing.T) {
 	rc.mu.Unlock()
 	if !closed {
 		t.Error("source должен быть закрыт при отмене контекста")
+	}
+}
+
+func TestKubectlLogArgs(t *testing.T) {
+	sel := Selection{Context: "c1", Namespace: "ns", Pod: "p1", Container: "ct1"}
+	args := kubectlLogArgs(sel, "1h", "", true, 200)
+	want := []string{"--context", "c1", "logs", "-n", "ns", "p1", "-c", "ct1", "--tail", "200", "-f", "--timestamps=true"}
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Errorf("args = %v, want %v", args, want)
+	}
+	has := func(token string) bool {
+		for _, a := range args {
+			if a == token {
+				return true
+			}
+		}
+		return false
+	}
+	if has("--since") || has("--since-time") {
+		t.Errorf("--tail вместе с --since/--since-time не допустим: %v", args)
+	}
+
+	// lines<=0 → используется --since.
+	args = kubectlLogArgs(sel, "6h", "", false, 0)
+	if !has("--since") || has("-f") || has("--tail") {
+		t.Errorf("args = %v", args)
+	}
+
+	// sinceTime приоритетнее since (переподключение стрима).
+	args = kubectlLogArgs(sel, "6h", "2024-01-02T03:04:05.000000000Z", true, 0)
+	if !has("--since-time") || has("--since") {
+		t.Errorf("args = %v", args)
+	}
+
+	// Без since и tail, follow=false → минимум флагов.
+	args = kubectlLogArgs(Selection{Context: "c2", Namespace: "ns", Pod: "p2"}, "", "", false, 0)
+	for _, not := range []string{"-c", "--tail", "--since", "--since-time", "-f"} {
+		if has(not) {
+			t.Errorf("аргумент %q не должен присутствовать: %v", not, args)
+		}
+	}
+}
+
+func TestRunLogStreamLongLine(t *testing.T) {
+	long := strings.Repeat("X", 4*1024*1024) // 4MB в одной строке без перевода строки
+	src := fakeSource(map[string]string{"podA": long + "\nshort\n"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := runLogStream(ctx, []Selection{
+		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
+	}, "", false, 0, src)
+
+	var msgs []string
+	for ev := range events {
+		if ev.Err != nil {
+			t.Fatalf("неожиданная ошибка: %v", ev.Err)
+		}
+		msgs = append(msgs, ev.Line.Message)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("len(msgs) = %d, want 2 (длинная строка + короткая)", len(msgs))
+	}
+	if msgs[0] != long {
+		t.Errorf("длинная строка испорчена (len=%d, want %d)", len(msgs[0]), len(long))
+	}
+	if msgs[1] != "short" {
+		t.Errorf("вторая строка = %q", msgs[1])
+	}
+}
+
+func TestRestartFollowStreamReopensOnEOF(t *testing.T) {
+	// Эмулируем клиентский/прокси-обрыв kubectl-стрима: каждый reader
+	// заканчивается EOF, restartFollowStream должен переоткрыть источник
+	// и продолжить с последней метки времени (--since-time), а не обнулять
+	// вывод и не рвать SSE.
+	ts := "2024-01-02T03:04:05.000000000Z"
+	var calls []struct {
+		sinceTime string
+		lines     int
+	}
+	bodies := []string{
+		ts + " a\n" + ts + " b\n",
+		ts + " b\n" + ts + " c\n",
+		ts + " c\n",
+	}
+	old := openLogStreamFn
+	// Отдельная переменная-счётчик, чтобы исходный глобальный стример не тронуть.
+	src := sourceFunc(func(sel Selection, _ string, sinceTime string, _ bool, lines int) (io.ReadCloser, error) {
+		calls = append(calls, struct {
+			sinceTime string
+			lines     int
+		}{sinceTime, lines})
+		i := len(calls) - 1
+		if i >= len(bodies) {
+			return io.NopCloser(strings.NewReader("")), nil
+		}
+		return io.NopCloser(strings.NewReader(bodies[i])), nil
+	})
+	defer func() { openLogStreamFn = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events := restartFollowStream(ctx, []Selection{
+		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
+	}, "", true, 200, src)
+
+	var msgs []string
+	for ev := range events {
+		if ev.Err != nil {
+			t.Errorf("неожиданная ошибка: %v", ev.Err)
+			break
+		}
+		msgs = append(msgs, ev.Line.Message)
+		if len(msgs) >= 5 {
+			cancel()
+		}
+	}
+	// a, b, затем переподключение дублирует границу b, дальше c и т.д.
+	want := []string{"a", "b", "b", "c", "c"}
+	if len(msgs) < len(want) {
+		t.Fatalf("messages = %v, want как минимум %v (переподключения не было?)", msgs, want)
+	}
+	for i := 0; i < len(want); i++ {
+		if msgs[i] != want[i] {
+			t.Errorf("messages[%d] = %q, want %q (весь поток: %v)", i, msgs[i], want[i], msgs)
+		}
+	}
+	if len(calls) < 2 {
+		t.Fatalf("source вызван %d раз, ждали переоткрытие (>=2)", len(calls))
+	}
+	if calls[0].sinceTime != "" || calls[0].lines != 200 {
+		t.Errorf("первый вызов source = %+v, want sinceTime=\"\" lines=200", calls[0])
+	}
+	for _, c := range calls[1:] {
+		if c.sinceTime != ts || c.lines != 0 {
+			t.Errorf("повторный вызов source = %+v, want sinceTime=%q lines=0 (возобновление без дыры)", c, ts)
+		}
 	}
 }
 
@@ -710,8 +887,18 @@ func TestAPIHandlerJSON(t *testing.T) {
 }
 
 func TestLogsHandlerStreamsSSE(t *testing.T) {
+	var gotSel Selection
+	type srcCall struct {
+		sel    Selection
+		since  string
+		follow bool
+		lines  int
+	}
+	var got srcCall
 	old := openLogStreamFn
-	openLogStreamFn = func(sel Selection, since string, follow bool) (io.ReadCloser, error) {
+	openLogStreamFn = func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+		got = srcCall{sel: sel, since: since, follow: follow, lines: lines}
+		gotSel = sel
 		return io.NopCloser(strings.NewReader(
 			"2024-01-02T03:04:05.000000000Z line-alpha\nline-beta\n")), nil
 	}
@@ -721,7 +908,8 @@ func TestLogsHandlerStreamsSSE(t *testing.T) {
 	defer srv.Close()
 
 	sel := "k8s-prod|prod|web-0|web"
-	resp, err := http.Get(srv.URL + "/logs?sel=" + url.QueryEscape(sel) + "&since=1h&follow=1")
+	// follow=0 → одиночный снимок истории (конечный, читается до done).
+	resp, err := http.Get(srv.URL + "/logs?sel=" + url.QueryEscape(sel) + "&since=1h&follow=0&lines=200")
 	if err != nil {
 		t.Fatalf("GET /logs: %v", err)
 	}
@@ -747,6 +935,15 @@ func TestLogsHandlerStreamsSSE(t *testing.T) {
 			t.Errorf("SSE-поток не содержит %q", want)
 		}
 	}
+	if got.sel.Pod != "web-0" || got.since != "1h" || got.follow {
+		t.Errorf("sourceFun словила не те параметры: %+v", got)
+	}
+	if got.lines != 200 {
+		t.Errorf("lines = %d, want 200", got.lines)
+	}
+	if gotSel.Container != "web" {
+		t.Errorf("selection container = %q", gotSel.Container)
+	}
 }
 
 func TestLogsHandlerNoSelection(t *testing.T) {
@@ -765,7 +962,7 @@ func TestLogsHandlerNoSelection(t *testing.T) {
 
 func TestLogsHandlerEmptySelectionIgnored(t *testing.T) {
 	old := openLogStreamFn
-	openLogStreamFn = func(sel Selection, since string, follow bool) (io.ReadCloser, error) {
+	openLogStreamFn = func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader("hello\n")), nil
 	}
 	defer func() { openLogStreamFn = old }()
@@ -773,7 +970,8 @@ func TestLogsHandlerEmptySelectionIgnored(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(handleLogs))
 	defer srv.Close()
 	// Используем URL-кодирование для обоих sel, в т.ч. невалидного.
-	raw := url.QueryEscape("good|ns1|pod1|c1") + "&sel=" + url.QueryEscape("мусор")
+	// follow=0 → конечный снимок, иначе хендлер не завершится.
+	raw := url.QueryEscape("good|ns1|pod1|c1") + "&sel=" + url.QueryEscape("мусор") + "&follow=0"
 	resp, err := http.Get(srv.URL + "/logs?sel=" + raw)
 	if err != nil {
 		t.Fatalf("GET /logs: %v", err)
@@ -935,22 +1133,24 @@ func TestPVCByContextParsesJSON(t *testing.T) {
 			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
 		}
 		return []byte(`{"items":[
-			{"metadata":{"name":"web-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
-			{"metadata":{"name":"db-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"200Gi"}}}},
-			{"metadata":{"name":"logs","namespace":"ops"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
+			{"metadata":{"name":"web-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"10Gi"}}},"status":{"phase":"Bound","capacity":{"storage":"10Gi"}}},
+			{"metadata":{"name":"db-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"200Gi"}}},"status":{"phase":"Bound","capacity":{"storage":"190Gi"}}},
+			{"metadata":{"name":"logs","namespace":"ops"},"spec":{"resources":{"requests":{"storage":"5Gi"}}},"status":{"phase":"Pending"}}
 		]}`), nil
 	}
 	defer func() { runKubectlFn = oldRun }()
 
-	inUse, total, used, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true})
+	bound, total, boundBytes, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true})
 	if !ok {
 		t.Error("ok = false, want true")
 	}
-	if inUse != 1 || total != 3 {
-		t.Errorf("inUse/total = %d/%d, want 1/3", inUse, total)
+	if bound != 2 || total != 3 {
+		t.Errorf("bound/total = %d/%d, want 2/3", bound, total)
 	}
-	if used != 10<<30 || totalBytes != 215<<30 {
-		t.Errorf("used = %d, total = %d; want 10GiB, 215GiB", used, totalBytes)
+	// boundBytes: реальная ёмкость Bound PVC (10GiB + 190GiB, а не запрос 200GiB);
+	// totalBytes: сумма всех запросов 10+200+5 = 215GiB.
+	if boundBytes != 200<<30 || totalBytes != 215<<30 {
+		t.Errorf("boundBytes = %d, totalBytes = %d; want 200GiB, 215GiB", boundBytes, totalBytes)
 	}
 }
 
@@ -961,15 +1161,15 @@ func TestPVCByContextRBACDeniedFallsBackToMounted(t *testing.T) {
 	}
 	defer func() { runKubectlFn = oldRun }()
 
-	inUse, total, used, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true, "ops|logs": true})
+	bound, total, boundBytes, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true, "ops|logs": true})
 	if ok {
 		t.Error("ok = true, want false when listing denied")
 	}
-	if inUse != 2 {
-		t.Errorf("inUse = %d, want 2 (fallback to mounted)", inUse)
+	if bound != 2 {
+		t.Errorf("bound = %d, want 2 (fallback to mounted)", bound)
 	}
-	if total != 0 || used != 0 || totalBytes != 0 {
-		t.Errorf("expected zeros, got total=%d used=%d bytes=%d", total, used, totalBytes)
+	if total != 0 || boundBytes != 0 || totalBytes != 0 {
+		t.Errorf("expected zeros, got total=%d boundBytes=%d bytes=%d", total, boundBytes, totalBytes)
 	}
 }
 
@@ -1127,6 +1327,32 @@ func TestOverviewScopes(t *testing.T) {
 		{"metadata":{"name":"n2"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}
 	]}`
 	runNS := `{"items":[{"metadata":{"name":"default"},"status":{"phase":"Active"}}]}`
+	// Реальный kubectl отдаёт плоский List (объекты с собственным kind).
+	runJobs := `{"kind":"List","items":[
+		{"kind":"Job","metadata":{"name":"migrate","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"}},
+		{"kind":"Job","metadata":{"name":"archive","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"}},
+		{"kind":"CronJob","metadata":{"name":"nightly","namespace":"prod","creationTimestamp":"2026-01-03T00:00:00Z"}}
+	]}`
+	runConfigs := `{"kind":"List","items":[
+		{"kind":"ConfigMapList","items":[
+			{"metadata":{"name":"app-config","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}
+		]},
+		{"kind":"SecretList","items":[
+			{"metadata":{"name":"tls","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"}}
+		]}
+	]}`
+
+	runWorkloads := `{"kind":"List","items":[
+		{"kind":"DeploymentList","items":[
+			{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"}}
+		]},
+		{"kind":"DaemonSetList","items":[
+			{"metadata":{"name":"node-exporter","namespace":"kube-system","creationTimestamp":"2026-01-01T00:00:00Z"}}
+		]},
+		{"kind":"StatefulSetList","items":[
+			{"metadata":{"name":"db","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}]},
+		{"kind":"ReplicaSetList","items":[]}
+	]}`
 
 	runKubectlFn = func(args ...string) ([]byte, error) {
 		j := strings.Join(args, " ")
@@ -1139,6 +1365,12 @@ func TestOverviewScopes(t *testing.T) {
 			return []byte(runNodes), nil
 		case strings.Contains(j, "get namespaces"):
 			return []byte(runNS), nil
+		case strings.Contains(j, "get jobs,cronjobs"):
+			return []byte(runJobs), nil
+		case strings.Contains(j, "get configmaps,secrets"):
+			return []byte(runConfigs), nil
+		case strings.Contains(j, "get deployments,daemonsets,statefulsets,replicasets"):
+			return []byte(runWorkloads), nil
 		}
 		return []byte("unexpected: " + j), fmt.Errorf("unexpected")
 	}
@@ -1204,6 +1436,65 @@ func TestOverviewScopes(t *testing.T) {
 	r = call("ctx")
 	if len(r.Items) != 2 || r.Items[0].Kind != "cluster" || r.Items[0].Name != "c1" || r.Items[0].Ctx != "c1" {
 		t.Errorf("ctx items = %+v", r.Items)
+	}
+
+	// jobs: 2 контекста × (2 job + 1 cronjob) = 6 элементов.
+	r = call("jobs")
+	if len(r.Items) != 6 {
+		t.Fatalf("jobs items = %d, want 6", len(r.Items))
+	}
+	gotKind := map[string]int{}
+	catOK := true
+	for _, it := range r.Items {
+		gotKind[it.Kind]++
+		if it.Ctx == "" || it.Ns == "" {
+			t.Errorf("jobs item должен иметь ctx и ns: %+v", it)
+		}
+		if it.Cat != "Workload" {
+			catOK = false
+		}
+	}
+	if gotKind["job"] != 4 || gotKind["cronjob"] != 2 || !catOK {
+		t.Errorf("jobs разбивка = %v", gotKind)
+	}
+
+	// workloads: deployment, daemonset, statefulset (replicaset пуст) × 2 контекста.
+	r = call("workloads")
+	if len(r.Items) != 6 {
+		t.Fatalf("workloads items = %d, want 6", len(r.Items))
+	}
+	gotKind = map[string]int{}
+	allWorkload := true
+	for _, it := range r.Items {
+		gotKind[it.Kind]++
+		if it.Cat != "Workload" || it.Ctx == "" || it.Ns == "" {
+			allWorkload = false
+		}
+	}
+	if gotKind["deployment"] != 2 || gotKind["daemonset"] != 2 || gotKind["statefulset"] != 2 || !allWorkload {
+		t.Errorf("workloads разбивка = %v", gotKind)
+	}
+
+	// configs: configmap + secret, разные категории (Config и Secret).
+	r = call("configs")
+	if len(r.Items) != 4 {
+		t.Fatalf("configs items = %d, want 4", len(r.Items))
+	}
+	gotKind = map[string]int{}
+	gotCat := map[string]int{}
+	nsOK := true
+	for _, it := range r.Items {
+		gotKind[it.Kind]++
+		gotCat[it.Cat]++
+		if it.Ctx == "" || it.Ns == "" {
+			nsOK = false
+		}
+	}
+	if gotKind["configmap"] != 2 || gotKind["secret"] != 2 || !nsOK {
+		t.Errorf("configs разбивка = %v", gotKind)
+	}
+	if gotCat["Config"] != 2 || gotCat["Secret"] != 2 {
+		t.Errorf("configs категории = %v", gotCat)
 	}
 }
 
@@ -1346,9 +1637,9 @@ func TestRelatedHandlerListsResources(t *testing.T) {
 		"configmap/app-cm":               "Config",
 		"configmap/core-cm":              "Config",
 		"configmap/cm-from":              "Config",
-		"secret/tls-secret":              "Config",
+		"secret/tls-secret":              "Secret",
 		"persistentvolumeclaim/data-pvc": "Storage",
-		"serviceaccount/coredns":         "Access",
+		"serviceaccount/coredns":         "RBAC",
 		"namespace/kube-system":          "Cluster",
 		"node/n1":                        "Cluster",
 	}
