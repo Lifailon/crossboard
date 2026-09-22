@@ -1,0 +1,1164 @@
+{{define "frontend"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>KubeLogs - live logs from all clusters</title>
+<style>
+:root {
+  --bg:#0a0f1e; --bg2:#0e1628; --panel:#111a30; --panel2:#16213c;
+  --line:#22304f; --line2:#2b3c63; --text:#dce5f6; --muted:#8aa0c4; --dim:#5c7197;
+  --accent:#38bdf8; --violet:#a78bfa; --blue:#60a5fa; --teal:#2dd4bf;
+  --ok:#34d399; --warn:#fbbf24; --red:#f87171; --amber:#f59e0b;
+  --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,'Courier New',monospace;
+  --sans:system-ui,-apple-system,'Segoe UI',Roboto,'Inter',sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:
+    radial-gradient(1100px 520px at 85% -10%, rgba(56,189,248,.09), transparent 60%),
+    radial-gradient(900px 480px at -10% 0%, rgba(167,139,250,.09), transparent 55%),
+    var(--bg);
+  color:var(--text); font:14px/1.45 var(--sans); padding-bottom:40px;
+}
+a{color:var(--accent)}
+.hidden{display:none !important}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:18px 22px;border-bottom:1px solid var(--line);background:rgba(10,15,30,.75);backdrop-filter:blur(10px);position:sticky;top:0;z-index:40}
+.logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--violet));display:grid;place-items:center;font-weight:800;color:#08111f}
+header h1{font-size:20px;margin:0;letter-spacing:.3px}
+.updated{margin-left:auto;color:var(--dim);font-size:12px;white-space:nowrap}
+.auto{display:flex;gap:8px;align-items:center}
+.auto button{white-space:nowrap;font-size:12px;padding:7px 12px}
+.auto button.on{background:var(--ok);border-color:var(--ok);color:#08111f;font-weight:600}
+.auto button.on:hover{filter:brightness(1.12)}
+.auto select{max-width:110px;padding:7px 8px}
+
+/* ---------- banner ---------- */
+.banner{margin:16px 22px 0;padding:10px 14px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca;border-radius:10px;font-size:13px;white-space:pre-wrap;word-break:break-word}
+
+/* ---------- cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 22px;max-width:1600px;margin:0 auto}
+.card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:12px 14px 11px;overflow:hidden}
+.card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--cc)}
+.card .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.card .value{font-size:28px;font-weight:700;line-height:1.15;color:var(--cc);font-family:var(--mono)}
+.card.accent{--cc:var(--accent)} .card.violet{--cc:var(--violet)} .card.blue{--cc:var(--blue)}
+.card.teal{--cc:var(--teal)} .card.ok{--cc:var(--ok)} .card.red{--cc:var(--red)}
+.card.amber{--cc:var(--amber)} .card.redSoft{--cc:var(--red)}
+
+/* ---------- toolbar ---------- */
+.toolbar{max-width:1600px;margin:6px auto 0;padding:0 22px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.search-wrap{position:relative;flex:1 1 320px;min-width:240px}
+.search-wrap input{width:100%;padding:10px 34px 10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:14px;outline:none}
+.search-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.15)}
+.search-wrap .ico{position:absolute;right:11px;top:50%;transform:translateY(-50%);color:var(--dim);pointer-events:none}
+select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;outline:none;max-width:220px}
+select:focus{border-color:var(--accent)}
+.actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 14px;transition:all .15s}
+button:hover{border-color:var(--line2);background:var(--panel2)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#08111f;font-weight:600}
+button.primary:hover{filter:brightness(1.12)}
+
+/* ---------- table ---------- */
+.tablewrap{max-width:1600px;margin:14px auto 0;padding:0 22px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.table-scroll{overflow:auto;max-height:calc(100vh - 320px);min-height:160px}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+thead th{position:sticky;top:0;z-index:10;background:#0d1527;color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.5px;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);user-select:none}
+thead th[data-key]{cursor:pointer}
+thead th[data-key]:hover{color:var(--text)}
+thead th.sorted{color:var(--accent)}
+thead th.sorted.asc::after{content:"\25B2";opacity:1}
+thead th.sorted.desc::after{content:"\25BC";opacity:1}
+tbody td{padding:8px 10px;border-bottom:1px solid rgba(34,48,79,.55);vertical-align:middle}
+tbody tr:hover{background:rgba(56,189,248,.045)}
+tfoot td{position:sticky;bottom:0;z-index:9;background:#0d1527;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-top:1px solid var(--line2)}
+tfoot td.sel{color:var(--accent);text-align:center;font-weight:700;font-family:var(--mono)}
+.col-chk{width:34px;text-align:center}
+td.chk{text-align:center}
+input[type=checkbox]{accent-color:var(--accent)}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid transparent}
+.badge.ok{background:rgba(52,211,153,.12);color:var(--ok);border-color:rgba(52,211,153,.35)}
+.badge.warn{background:rgba(251,191,36,.12);color:var(--warn);border-color:rgba(251,191,36,.35)}
+.badge.err{background:rgba(248,113,113,.12);color:var(--red);border-color:rgba(248,113,113,.35)}
+.badge.unk{background:rgba(148,163,184,.12);color:var(--muted);border-color:rgba(148,163,184,.35)}
+.badge.muted{background:transparent;color:var(--dim);border-color:var(--line)}
+.badge.yes{background:rgba(52,211,153,.15);color:var(--ok)}
+.badge.no{background:rgba(248,113,113,.15);color:var(--red)}
+td.ctx{color:var(--accent);font-family:var(--mono);font-size:12px}
+td.ns{color:var(--text)}
+td.pod{color:#c9d6ee;font-family:var(--mono)}
+td.cont{color:var(--teal);font-family:var(--mono);cursor:pointer}
+td.node{color:var(--muted);font-family:var(--mono);font-size:12px}
+td.qos{color:var(--violet);font-size:12px}
+td.labels{max-width:240px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12px}
+td.cpu{max-width:130px;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font-size:12px;font-family:var(--mono)}
+td.mem{max-width:150px;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font-size:12px;font-family:var(--mono)}
+td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
+.empty{padding:36px;text-align:center;color:var(--dim)}
+
+/* ---------- resource browser ---------- */
+.spec-wrap{display:flex;flex:1;min-height:0}
+.spec-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px 20px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--muted)}
+.spec-meta b{color:var(--text);font-weight:600}
+.spec-meta .labs{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;font-family:var(--mono);font-size:11px;max-width:100%}
+.lchip{display:inline-flex;align-items:center;gap:3px;padding:1px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.lchip .lk{color:var(--violet)}
+.lchip .lv{color:var(--teal)}
+.lchip .eq{color:var(--dim)}
+.spec-meta code{background:rgba(56,189,248,.08);padding:1px 6px;border-radius:6px}
+.spec-list{flex:0 0 270px;max-width:310px;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
+.spec-tools{display:flex;flex-direction:column;gap:8px;padding:10px;border-bottom:1px solid var(--line)}
+.spec-tools input[type=search]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--text);font-size:12px;outline:none;box-sizing:border-box}
+.spec-tools input[type=search]:focus{border-color:var(--accent)}
+.spec-chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-size:11px;cursor:pointer;user-select:none;white-space:nowrap}
+.chip:hover{border-color:var(--accent)}
+.chip.on{background:rgba(56,189,248,.14);color:var(--accent);border-color:var(--accent)}
+.chip .n{opacity:.6;margin-left:4px}
+.spec-items{flex:1;overflow-y:auto;padding:10px}
+.spec-cat{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin:10px 2px 4px;white-space:nowrap}
+.spec-item{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;margin:2px 0;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text);font-size:12px}
+.spec-item:hover{background:rgba(56,189,248,.08)}
+.spec-item.active{background:rgba(56,189,248,.12);border-color:var(--accent)}
+.spec-kind{flex:0 0 auto;min-width:84px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);font-family:var(--mono)}
+.spec-item .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spec-item .age{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.spec-item .snip{flex:1 1 100%;min-width:0;margin-top:2px;font-size:10px;font-family:var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spec-body{flex:1;overflow:auto;padding:14px 18px;margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;color:#cdd9f0;white-space:pre-wrap;word-break:break-word;background:#070c19}
+.spec-body.error{color:var(--red)}
+
+/* ---------- modal ---------- */
+.modal{position:fixed;inset:0;z-index:50;background:rgba(5,9,18,.72);backdrop-filter:blur(6px);display:flex;align-items:stretch;justify-content:center;padding:14px}
+.modal-window{display:flex;flex-direction:column;width:min(1350px,100%);height:100%;background:var(--bg2);border:1px solid var(--line2);border-radius:16px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.modal-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.modal-head h2{margin:0;font-size:16px;white-space:nowrap}
+.modal-head h2 span{color:var(--accent);font-family:var(--mono);font-weight:600}
+.modal-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.modal-tools input[type=search]{padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--text);font-size:13px;outline:none;width:240px}
+.modal-tools input[type=search]:focus{border-color:var(--accent)}
+.cb{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none}
+.conn{font-size:12px;font-weight:600;white-space:nowrap}
+.conn.on{color:var(--ok)} .conn.off{color:var(--red)} .conn.wait{color:var(--warn)}
+.count{font-size:12px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.log-body{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#070c19}
+.logline{display:flex;gap:10px;padding:1px 14px;border-bottom:1px solid rgba(34,48,79,.18)}
+.logline:hover{background:rgba(56,189,248,.05);cursor:pointer}
+.logline.hide{display:none}
+.logline.logerr{background:rgba(248,113,113,.08)}
+.lb-badge{flex:0 0 auto;min-width:64px;max-width:180px;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis}
+.lb-time{flex:0 0 auto;width:200px;color:var(--dim);font-size:11px;white-space:nowrap}
+.lb-where{flex:0 0 auto;color:var(--teal);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.lb-msg{white-space:pre-wrap;word-break:break-word;color:#cdd9f0;flex:1}
+.lb-msg mark{background:var(--warn);color:#1a1204;border-radius:3px;padding:0 2px}
+.spec-body mark,.spec-item mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
+.logline.logerr .lb-msg{color:var(--red)}
+.modal-foot{display:flex;align-items:center;gap:10px;padding:8px 16px;border-top:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--dim)}
+#selInfo{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:var(--mono);color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:900px){
+  .hide-sm{display:none}
+  .updated{display:none}
+}
+@media (max-width:640px){
+  .cards{grid-template-columns:repeat(auto-fit,minmax(110px,1fr));padding:12px}
+  .card .value{font-size:22px}
+  .toolbar,.tablewrap{padding:0 12px}
+  .modal{padding:0}
+  .modal-window{width:100%;height:100%;border:0;border-radius:0}
+  .hide-md{display:none}
+  .lb-time{display:none}
+  .modal-tools input[type=search]{width:140px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">KL</div>
+  <h1>KubeLogs</h1>
+  <span class="updated" id="updated">{{.Generated.Format "2006-01-02 15:04:05"}}</span>
+  <div class="auto">
+    <button id="autoBtn" title="Toggle automatic table refresh">Auto: off</button>
+    <select id="autoInt" title="Refresh interval">
+      <option value="5">5s</option>
+      <option value="10">10s</option>
+      <option value="15" selected>15s</option>
+      <option value="30">30s</option>
+      <option value="60">60s</option>
+    </select>
+  </div>
+</header>
+
+{{if .Error}}
+<div class="banner">Some clusters are unavailable: {{.Error}}</div>
+{{end}}
+
+<section class="cards" id="cards">
+{{range .Cards}}
+  <div class="card {{.Color}}" title="{{.Hint}}">
+    <div class="label">{{.Label}}</div>
+    <div class="value">{{.Value}}</div>
+  </div>
+{{end}}
+</section>
+
+<section class="toolbar">
+  <div class="search-wrap">
+    <input id="fQ" type="search" placeholder="Filter by pod name / container..." autocomplete="off">
+    <span class="ico">&#8981;</span>
+  </div>
+  <select id="fCtx"><option value="">Context: all</option>{{range .Contexts}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select id="fNs"><option value="">Namespace: all</option>{{range .Namespaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select id="fNode"><option value="">Node: all</option>{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select id="fPhase">
+    <option value="">Phase: all</option>
+    {{range .Phases}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select>
+  <div class="actions">
+    <button class="primary" id="btnOpen">Show logs</button>
+  </div>
+</section>
+
+<section class="tablewrap">
+  <div class="panel">
+    <div class="table-scroll">
+      <table id="podTable">
+        <thead>
+          <tr>
+            <th class="col-chk"><input type="checkbox" id="selectAll" title="Select all visible"></th>
+            <th data-key="ctx">Context</th>
+            <th data-key="ns">Namespace</th>
+            <th data-key="node">Node</th>
+            <th data-key="pod">Pod</th>
+            <th data-key="cont">Container</th>
+            <th data-key="age">Age</th>
+            <th data-key="phase">Phase</th>
+            <th data-key="state">State</th>
+            <th data-key="ready">Ready</th>
+            <th data-key="rests">Restarts</th>
+            <th data-key="cpu" class="hide-sm hide-md">CPU</th>
+            <th data-key="mem" class="hide-sm hide-md">Mem</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+        {{range .Pods}}
+          <tr data-ix="{{.ID}}"
+              data-ctx="{{.Context}}" data-ns="{{.Namespace}}" data-pod="{{.Name}}"
+              data-cont="{{.Container}}" data-node="{{.Node}}" data-phase="{{.Phase}}"
+              data-state="{{.State}}" data-ready="{{.Ready}}" data-rests="{{.RestartCount}}"
+              data-image="{{.Image}}" data-cpu="{{.Cpu}}" data-mem="{{.Mem}}" data-ts="{{.Created}}"
+              data-owner="{{.Owner}}" data-ownerkind="{{.OwnerKind}}">
+            <td class="chk"><input type="checkbox" class="row-check" value="{{.ID}}"></td>
+            <td class="ctx">{{.Context}}</td>
+            <td class="ns">{{.Namespace}}</td>
+            <td class="node">{{.Node}}</td>
+            <td class="pod">{{.Name}}</td>
+            <td class="cont">{{.Container}}</td>
+            <td class="created" title="created {{.Created}}">{{.Age}}</td>
+            <td><span class="badge {{.PhaseCss}}">{{.Phase}}</span></td>
+            <td><span class="badge {{.StateCss}}">{{.State}}</span></td>
+            <td>{{if .Ready}}<span class="badge yes">Yes</span>{{else}}<span class="badge no">No</span>{{end}}</td>
+            <td>{{if gt .RestartCount 0}}<span class="badge warn">{{.RestartCount}}</span>{{else}}<span class="badge muted">0</span>{{end}}</td>
+            <td class="cpu hide-sm hide-md" title="CPU usage/limit, % of limit">{{.Cpu}}</td>
+            <td class="mem hide-sm hide-md" title="Memory usage/limit, % of limit">{{.Mem}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="13" class="empty">No pods found. Check your kubeconfig and cluster availability.</td></tr>
+        {{end}}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td class="sel" id="selFoot">0</td>
+            <td colspan="12" id="selFootLabel">containers selected</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</section>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-window">
+    <header class="modal-head">
+      <h2>Live logs <span id="mdCount"></span></h2>
+      <div class="modal-tools">
+        <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
+        <label class="cb" title="Case sensitive"><input type="checkbox" id="caseSens"> Aa</label>
+        <label class="cb" title="Auto scroll to bottom"><input type="checkbox" id="autoScroll" checked> Scroll</label>
+        <select id="sinceSel" title="How far back to read logs">
+          <option value="">Since: all</option>
+          <option value="1h">1h</option>
+          <option value="6h">6h</option>
+          <option value="12h">12h</option>
+          <option value="24h" selected>24h</option>
+          <option value="7d">7d</option>
+          <option value="30d">30d</option>
+        </select>
+        <label class="cb" title="Follow new lines"><input type="checkbox" id="followChk" checked> Follow</label>
+        <span class="conn wait" id="connState">-</span>
+        <span class="count" id="lineCount">0</span>
+        <button id="btnPause">Pause</button>
+        <button id="btnClear">Clear</button>
+        <button id="btnDownload">Download</button>
+        <button id="btnClose">&#10005;</button>
+      </div>
+    </header>
+    <div id="logBody" class="log-body"></div>
+    <footer class="modal-foot">
+      <span id="selInfo"></span>
+      <span>click a line to copy its text</span>
+    </footer>
+  </div>
+</div>
+
+<div id="specModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-window">
+    <header class="modal-head">
+      <h2>Resources <span id="specTitle"></span></h2>
+      <div class="modal-tools">
+        <button id="btnSpecClose" title="Close">&#10005;</button>
+      </div>
+    </header>
+    <div class="spec-meta" id="specMeta"></div>
+    <div class="spec-wrap">
+      <nav class="spec-list">
+        <div class="spec-tools">
+          <input id="specFilter" type="search" placeholder="Filter by kind/name" autocomplete="off">
+          <input id="specSearch" type="search" placeholder="Search in manifests..." autocomplete="off">
+          <div class="spec-chips" id="specChips"></div>
+        </div>
+        <div class="spec-items" id="specItems"></div>
+      </nav>
+      <pre id="specBody" class="spec-body">Loading...</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+"use strict";
+var $ = function (s) { return document.querySelector(s); };
+var modal = $("#modal");
+var logBody = $("#logBody");
+var tbody = $("#tbody");
+var fQ = $("#fQ"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPhase = $("#fPhase");
+var selectAll = $("#selectAll"), btnOpen = $("#btnOpen");
+var selFoot = $("#selFoot"), selFootLabel = $("#selFootLabel");
+var connState = $("#connState"), lineCountEl = $("#lineCount"), selInfo = $("#selInfo");
+var logFilter = $("#logFilter"), caseSens = $("#caseSens"), autoScroll = $("#autoScroll");
+var sinceSel = $("#sinceSel"), followChk = $("#followChk");
+var btnPause = $("#btnPause");
+var specModal = $("#specModal"), specBody = $("#specBody"), specTitle = $("#specTitle");
+var specItems = $("#specItems"), specChips = $("#specChips"), specMeta = $("#specMeta");
+var specFilter = $("#specFilter"), specSearch = $("#specSearch");
+var autoBtn = $("#autoBtn"), autoInt = $("#autoInt");
+
+var rows = [];
+var ES = null;
+var paused = false;
+var totalLines = 0;
+var shownLines = 0;
+var sortKey = "ctx";
+var sortDir = 1;
+
+function norm(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
+
+function rowTokens(tr) {
+  return norm([tr.dataset.pod, tr.dataset.cont].join(" "));
+}
+
+function cacheRows() { rows = Array.prototype.slice.call(tbody.querySelectorAll("tr")); }
+
+function applyFilters() {
+  var q = norm(fQ.value);
+  var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value;
+  var vis = 0;
+  rows.forEach(function (tr) {
+    var ok = (!q || rowTokens(tr).indexOf(q) !== -1);
+    if (ok && c && tr.dataset.ctx !== c) ok = false;
+    if (ok && n && tr.dataset.ns !== n) ok = false;
+    if (ok && nd && tr.dataset.node !== nd) ok = false;
+    if (ok && p && tr.dataset.phase !== p) ok = false;
+    tr.style.display = ok ? "" : "none";
+    if (ok) vis++;
+  });
+  var e2 = document.getElementById("emptyRow");
+  if (vis === 0 && rows.length > 0) {
+    if (!e2) {
+      e2 = document.createElement("tr");
+      e2.id = "emptyRow";
+      var td = document.createElement("td");
+      td.colSpan = 13;
+      td.className = "empty";
+      td.textContent = "Nothing found for the given filters.";
+      e2.appendChild(td);
+      tbody.appendChild(e2);
+    } else { e2.style.display = ""; }
+  } else if (e2) { e2.style.display = "none"; }
+}
+
+function updateSel() {
+  var n = tbody.querySelectorAll(".row-check:checked").length;
+  selFoot.textContent = n;
+  selFootLabel.textContent = n === 1 ? "container selected" : "containers selected";
+  btnOpen.disabled = n === 0;
+}
+
+function checkAllVisible() {
+  rows.forEach(function (tr) {
+    if (tr.style.display !== "none") {
+      var cb = tr.querySelector(".row-check");
+      if (cb) cb.checked = selectAll.checked;
+    }
+  });
+  updateSel();
+}
+
+fQ.addEventListener("input", applyFilters);
+fCtx.addEventListener("change", applyFilters);
+fNs.addEventListener("change", applyFilters);
+fNode.addEventListener("change", applyFilters);
+fPhase.addEventListener("change", applyFilters);
+selectAll.addEventListener("change", checkAllVisible);
+tbody.addEventListener("change", function (e) {
+  if (e.target.classList.contains("row-check")) updateSel();
+});
+
+/* ---------- sorting ---------- */
+function cellValue(tr, key) {
+  switch (key) {
+    case "node": return String(tr.dataset.node || "");
+    case "ctx": return String(tr.dataset.ctx || "");
+    case "ns": return String(tr.dataset.ns || "");
+    case "pod": return String(tr.dataset.pod || "");
+    case "cont": return String(tr.dataset.cont || "");
+    case "phase": return String(tr.dataset.phase || "");
+    case "state": return String(tr.dataset.state || "");
+    case "cpu": return String(tr.dataset.cpu || "");
+    case "mem": return String(tr.dataset.mem || "");
+    case "age": return String(tr.dataset.ts || "");
+    case "ready": return tr.dataset.ready === "true" ? 1 : 0;
+    case "rests": return parseInt(tr.dataset.rests || "0", 10) || 0;
+  }
+  return "";
+}
+
+function sortRows() {
+  var key = sortKey, dir = sortDir;
+  var arr = rows.slice();
+  arr.sort(function (a, b) {
+    var va = cellValue(a, key), vb = cellValue(b, key);
+    var cmp;
+    if (typeof va === "number" && typeof vb === "number") { cmp = va - vb; }
+    else { cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" }); }
+    return cmp * dir;
+  });
+  arr.forEach(function (tr) { tbody.appendChild(tr); });
+  rows = arr;
+  applyFilters();
+}
+
+var headers = Array.prototype.slice.call(document.querySelectorAll("thead th[data-key]"));
+headers.forEach(function (th) {
+  th.addEventListener("click", function () {
+    var k = th.dataset.key;
+    if (sortKey === k) { sortDir = -sortDir; } else { sortKey = k; sortDir = 1; }
+    headers.forEach(function (h) { h.classList.remove("sorted", "asc", "desc"); });
+    th.classList.add("sorted", sortDir === 1 ? "asc" : "desc");
+    sortRows();
+  });
+});
+
+/* ---------- auto refresh ---------- */
+var autoTimer = null;
+var autoOn = false;
+
+function doRefresh() {
+  fetch("/api/pods").then(function (r) { return r.json(); })
+    .then(renderAll)
+    .catch(function (err) { console.error(err); });
+}
+
+function setAuto(on) {
+  autoOn = on;
+  autoBtn.textContent = on ? "Auto: on" : "Auto: off";
+  autoBtn.classList.toggle("on", on);
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (on) {
+    doRefresh();
+    autoTimer = setInterval(doRefresh, parseInt(autoInt.value, 10) * 1000);
+  }
+}
+
+autoBtn.addEventListener("click", function () { setAuto(!autoOn); });
+autoInt.addEventListener("change", function () { if (autoOn) setAuto(true); });
+
+function fmtTime(t) {
+  if (!t) return "";
+  var d = new Date(t);
+  var p = function (x) { return String(x).padStart(2, "0"); };
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+function renderCards(cards) {
+  var host = $("#cards");
+  host.innerHTML = "";
+  cards.forEach(function (cd) {
+    var div = document.createElement("div");
+    div.className = "card " + cd.color;
+    div.title = cd.hint;
+    div.innerHTML = "<div class='label'></div><div class='value'></div>";
+    div.querySelector(".label").textContent = cd.label;
+    div.querySelector(".value").textContent = cd.value;
+    host.appendChild(div);
+  });
+}
+
+function fillSelect(sel, items, label) {
+  var prev = sel.value;
+  var ph = document.createElement("option");
+  ph.value = ""; ph.textContent = label;
+  sel.innerHTML = "";
+  sel.appendChild(ph);
+  items.forEach(function (it) {
+    var o = document.createElement("option");
+    o.value = it; o.textContent = it;
+    sel.appendChild(o);
+  });
+  sel.value = prev;
+}
+
+function renderSelects(ctxs, nss, nodes, phases) {
+  fillSelect(fCtx, ctxs, "Context: all");
+  fillSelect(fNs, nss, "Namespace: all");
+  fillSelect(fNode, nodes, "Node: all");
+  fillSelect(fPhase, phases, "Phase: all");
+}
+
+function phaseCss(ph) {
+  if (ph === "Running" || ph === "Succeeded") return "ok";
+  if (ph === "Pending") return "warn";
+  if (ph === "Failed" || ph === "Unknown") return "err";
+  return "unk";
+}
+function stateCss(st) {
+  if (st === "Running" || st === "Succeeded") return "ok";
+  if (st.indexOf("Waiting") === 0 || st === "Pending") return "warn";
+  if (st.indexOf("Terminated") === 0) return "err";
+  return "unk";
+}
+
+function renderTable(pods) {
+  tbody.innerHTML = "";
+  if (!pods || pods.length === 0) {
+    var tr0 = document.createElement("tr");
+    var td0 = document.createElement("td");
+    td0.colSpan = 13; td0.className = "empty";
+    td0.textContent = "No pods found. Check your kubeconfig and cluster availability.";
+    tr0.appendChild(td0);
+    tbody.appendChild(tr0);
+    cacheRows();
+    updateSel();
+    return;
+  }
+  var mk = function (tag, cls, txt) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (txt != null) el.textContent = txt;
+    return el;
+  };
+  var td = function (cls, txt) { return mk("td", cls, txt); };
+  var badge = function (cls, txt) {
+    var s = document.createElement("span");
+    s.className = "badge " + cls; s.textContent = txt;
+    return s;
+  };
+
+  pods.forEach(function (p) {
+    var tr = document.createElement("tr");
+    tr.dataset.ix = [p.context, p.namespace, p.name, p.container].join("|");
+    tr.dataset.ctx = p.context; tr.dataset.ns = p.namespace; tr.dataset.pod = p.name;
+    tr.dataset.cont = p.container; tr.dataset.node = p.node; tr.dataset.phase = p.phase;
+    tr.dataset.state = p.state; tr.dataset.ready = p.ready; tr.dataset.rests = p.restarts;
+    tr.dataset.image = p.image; tr.dataset.cpu = p.cpu || ""; tr.dataset.mem = p.mem || "";
+    tr.dataset.ts = p.created || "";
+    tr.dataset.owner = p.owner || ""; tr.dataset.ownerkind = p.ownerkind || "";
+    tr.dataset.labels = p.labels || "";
+
+    var t1 = td("chk", null);
+    var cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "row-check"; cb.value = tr.dataset.ix;
+    t1.appendChild(cb);
+
+    tr.appendChild(t1);
+    tr.appendChild(td("ctx", p.context));
+    tr.appendChild(td("ns", p.namespace));
+    tr.appendChild(td("node", p.node));
+    tr.appendChild(td("pod", p.name));
+    tr.appendChild(td("cont", p.container));
+
+    var t0 = td("created", p.age || "");
+    t0.title = "created " + (p.created || ""); tr.appendChild(t0);
+
+    var t2 = td(null, null); t2.appendChild(badge(phaseCss(p.phase), p.phase)); tr.appendChild(t2);
+    var t3 = td(null, null); t3.appendChild(badge(stateCss(p.state), p.state)); tr.appendChild(t3);
+    var t4 = td(null, null); t4.appendChild(badge(p.ready ? "yes" : "no", p.ready ? "Yes" : "No")); tr.appendChild(t4);
+    var t5 = td(null, null);
+    t5.appendChild(badge(p.restarts > 0 ? "warn" : "muted", p.restarts || 0));
+    tr.appendChild(t5);
+
+    var t6 = td("cpu hide-sm hide-md", p.cpu || "");
+    t6.title = "CPU usage/limit, % of limit"; tr.appendChild(t6);
+    var t7 = td("mem hide-sm hide-md", p.mem || "");
+    t7.title = "Memory usage/limit, % of limit"; tr.appendChild(t7);
+
+    tbody.appendChild(tr);
+  });
+  cacheRows();
+  updateSel();
+}
+
+function renderAll(d) {
+  var checked = {};
+  tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
+  renderCards(d.cards || []);
+  renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || []);
+  renderTable(d.pods || []);
+  tbody.querySelectorAll(".row-check").forEach(function (cb) {
+    if (checked[cb.value]) cb.checked = true;
+  });
+  updateSel();
+  var up = $("#updated");
+  if (up) up.textContent = fmtTime(d.generated);
+  var bn = $(".banner");
+  if (d.error) {
+    if (!bn) {
+      bn = document.createElement("div");
+      bn.className = "banner";
+      var header = document.querySelector("header");
+      header.parentNode.insertBefore(bn, header.nextSibling);
+    }
+    bn.textContent = "Some clusters are unavailable: " + d.error;
+  } else if (bn && bn.parentNode) { bn.parentNode.removeChild(bn); }
+  if (rows.length > 0) sortRows(); else applyFilters();
+}
+
+cacheRows();
+applyFilters();
+updateSel();
+
+/* ================= live log modal ================= */
+
+function selectedIDs() {
+  var out = [];
+  tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { out.push(cb.value); });
+  return out;
+}
+
+function setConn(html, cls) {
+  connState.textContent = html;
+  connState.className = "conn " + (cls || "wait");
+}
+
+function clearLog() {
+  logBody.innerHTML = "";
+  totalLines = 0; shownLines = 0;
+  $("#mdCount").textContent = "";
+  setConn("-", "wait");
+  lineCountEl.textContent = "0";
+  selInfo.textContent = "";
+  logFilter.value = "";
+}
+
+function openModal() {
+  var ids = selectedIDs();
+  if (ids.length === 0) return;
+  clearLog();
+  $("#mdCount").textContent = ids.length;
+  selInfo.textContent = ids.map(function (id) {
+    var parts = id.split("|");
+    return parts[0] + "/" + parts[2] + "/" + (parts[3] || "-");
+  }).join(";  ");
+  modal.classList.remove("hidden");
+  paused = false;
+  btnPause.textContent = "Pause";
+  startStream();
+}
+
+btnOpen.addEventListener("click", openModal);
+
+function closeStream() {
+  if (ES) { ES.close(); ES = null; }
+}
+
+function startStream() {
+  closeStream();
+  var ids = selectedIDs();
+  if (ids.length === 0) { setConn("Nothing selected", "off"); return; }
+  setConn("Connecting...", "wait");
+  var params = ["since=" + encodeURIComponent(sinceSel.value)];
+  if (!followChk.checked) params.push("follow=0");
+  ids.forEach(function (id) { params.push("sel=" + encodeURIComponent(id)); });
+  ES = new EventSource("/logs?" + params.join("&"));
+  ES.onopen = function () { setConn("Connected", "on"); };
+  ES.onmessage = function (e) {
+    var d;
+    try { d = JSON.parse(e.data); } catch (_) { return; }
+    if (!d) return;
+    addLine(d, !!d.error);
+  };
+  ES.onerror = function () {
+    if (ES && ES.readyState === EventSource.CLOSED) setConn("Closed / error", "off");
+    else setConn("Network error, reconnecting...", "off");
+  };
+  ES.addEventListener("done", function () {
+    setConn("Stream finished", "off");
+    closeStream();
+  });
+}
+
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+function highlightFrag(text, needle, cs) {
+  var f = document.createDocumentFragment();
+  if (!needle) { f.appendChild(document.createTextNode(text)); return f; }
+  var re = new RegExp(escRe(needle), cs ? "g" : "gi");
+  var last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) f.appendChild(document.createTextNode(text.slice(last, m.index)));
+    var mark = document.createElement("mark");
+    mark.textContent = m[0];
+    f.appendChild(mark);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) f.appendChild(document.createTextNode(text.slice(last)));
+  return f;
+}
+
+function renderMsg(el, raw) {
+  el.textContent = "";
+  el.appendChild(highlightFrag(raw, logFilter.value, caseSens.checked));
+}
+
+function addLine(d, isErr) {
+  var el = document.createElement("div");
+  el.className = "logline" + (isErr ? " logerr" : "");
+  el.dataset.raw = d.message || d.error || "";
+  el.dataset.hay = el.dataset.raw.toLowerCase();
+
+  var b = document.createElement("span");
+  b.className = "lb-badge"; b.textContent = d.context; b.title = (d.context || "") + "/" + (d.namespace || "");
+  var t = document.createElement("span");
+  t.className = "lb-time"; t.textContent = d.timestamp || "";
+  var w = document.createElement("span");
+  w.className = "lb-where";
+  w.textContent = d.pod + (d.container ? "/" + d.container : "");
+  var m = document.createElement("span");
+  m.className = "lb-msg";
+
+  el.appendChild(b); el.appendChild(t); el.appendChild(w); el.appendChild(m);
+  logBody.appendChild(el);
+  totalLines++;
+
+  var q = logFilter.value;
+  var ok = !q || (caseSens.checked ? el.dataset.raw.indexOf(q) !== -1 : el.dataset.hay.indexOf(q.toLowerCase()) !== -1);
+  if (ok) { shownLines++; renderMsg(m, el.dataset.raw); }
+  else { el.classList.add("hide"); }
+
+  el.addEventListener("click", function () {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(d.message || d.error || "");
+    }
+  });
+
+  lineCountEl.textContent = shownLines + " / " + totalLines;
+  if (autoScroll.checked) logBody.scrollTop = logBody.scrollHeight;
+}
+
+function applyLogFilter() {
+  var q = logFilter.value;
+  var cs = caseSens.checked;
+  var low = q.toLowerCase();
+  shownLines = 0;
+  logBody.querySelectorAll(".logline").forEach(function (el) {
+    var ok = !q || (cs ? el.dataset.raw.indexOf(q) !== -1 : el.dataset.hay.indexOf(low) !== -1);
+    el.classList.toggle("hide", !ok);
+    if (ok) { shownLines++; renderMsg(el.querySelector(".lb-msg"), el.dataset.raw); }
+  });
+  lineCountEl.textContent = shownLines + " / " + totalLines;
+}
+logFilter.addEventListener("input", applyLogFilter);
+caseSens.addEventListener("change", applyLogFilter);
+
+autoScroll.addEventListener("change", function () {
+  if (autoScroll.checked) logBody.scrollTop = logBody.scrollHeight;
+});
+logBody.addEventListener("scroll", function () {
+  var near = logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 60;
+  if (!near && autoScroll.checked) autoScroll.checked = false;
+});
+
+function restartIfStreaming() {
+  if (!paused && !modal.classList.contains("hidden")) startStream();
+}
+sinceSel.addEventListener("change", restartIfStreaming);
+followChk.addEventListener("change", restartIfStreaming);
+
+btnPause.addEventListener("click", function () {
+  if (paused) {
+    paused = false; btnPause.textContent = "Pause";
+    startStream();
+  } else {
+    paused = true; btnPause.textContent = "Resume";
+    closeStream();
+    setConn("Paused", "wait");
+  }
+});
+
+$("#btnClear").addEventListener("click", function () {
+  logBody.innerHTML = "";
+  totalLines = 0; shownLines = 0;
+  lineCountEl.textContent = "0";
+  if (!paused) startStream();
+});
+
+$("#btnDownload").addEventListener("click", function () {
+  var lines = [];
+  logBody.querySelectorAll(".logline:not(.hide)").forEach(function (el) {
+    var parts = [];
+    ["lb-time", "lb-badge", "lb-where", "lb-msg"].forEach(function (c) {
+      var q = el.querySelector("." + c);
+      if (q && q.textContent) parts.push(q.textContent);
+    });
+    lines.push(parts.join(" "));
+  });
+  if (lines.length === 0) return;
+  var blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  var a = document.createElement("a");
+  var f = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  a.href = URL.createObjectURL(blob);
+  a.download = "kubelogs-" + f + ".log";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+});
+
+function closeModal() {
+  closeStream();
+  modal.classList.add("hidden");
+  clearLog();
+}
+$("#btnClose").addEventListener("click", closeModal);
+
+/* ================= resource browser ================= */
+
+var CAT_ORDER = ["Workload", "Network", "Config", "Storage", "Access", "Cluster", "Other"];
+var relState = { tr: null, items: [], base: [], cats: {}, loaded: null, yaml: "", needle: "", resultsOn: false };
+
+function normStr(s) { return (s || "").toLowerCase(); }
+
+function labelPairs(l, fallback) {
+  var text = "";
+  if (l && typeof l !== "string") {
+    var ks = Object.keys(l).sort();
+    if (ks.length) text = ks.map(function (k) { return k + "=" + l[k]; }).join(", ");
+  }
+  if (!text) text = (typeof l === "string") ? (l || "") : (fallback || "");
+  return text.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function renderSpecMeta(tr, d) {
+  specMeta.innerHTML = "";
+  var lbl = document.createElement("span");
+  lbl.className = "labs";
+  var b = document.createElement("b");
+  b.textContent = "labels ";
+  lbl.appendChild(b);
+
+  var pairs = labelPairs(d.labels, tr.dataset.labels);
+  if (!pairs.length) {
+    var dash = document.createElement("code");
+    dash.textContent = "\u2014";
+    lbl.appendChild(dash);
+  }
+  pairs.forEach(function (pair) {
+    var chip = document.createElement("span");
+    chip.className = "lchip";
+    chip.title = pair;
+    var eq = pair.indexOf("=");
+    var lk = document.createElement("span");
+    lk.className = "lk";
+    if (eq === -1) { lk.textContent = pair; }
+    else {
+      lk.textContent = pair.slice(0, eq);
+      var eqEl = document.createElement("span");
+      eqEl.className = "eq"; eqEl.textContent = "=";
+      var lv = document.createElement("span");
+      lv.className = "lv"; lv.textContent = pair.slice(eq + 1);
+      chip.appendChild(lk); chip.appendChild(eqEl); chip.appendChild(lv);
+    }
+    if (eq === -1) chip.appendChild(lk);
+    lbl.appendChild(chip);
+  });
+
+  specMeta.appendChild(lbl);
+  if (d.error) {
+    var e = document.createElement("span");
+    e.className = "labs";
+    e.style.color = "var(--red)";
+    e.textContent = d.error;
+    specMeta.appendChild(e);
+  }
+}
+
+function matchRel(it, q) {
+  if (q && normStr(it.kind + " " + it.name).indexOf(q) === -1) return false;
+  return true;
+}
+
+function buildSpecChips() {
+  specChips.innerHTML = "";
+  var q = normStr(specFilter.value);
+  var counts = {};
+  relState.items.forEach(function (it) {
+    if (!matchRel(it, q)) return;
+    counts[it.cat] = (counts[it.cat] || 0) + 1;
+  });
+  CAT_ORDER.forEach(function (c) {
+    if (!counts[c]) return;
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (relState.cats[c] ? " on" : "");
+    var lbl = document.createElement("span");
+    lbl.textContent = c;
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = counts[c];
+    chip.appendChild(lbl); chip.appendChild(n);
+    chip.addEventListener("click", function () {
+      if (relState.cats[c]) delete relState.cats[c];
+      else relState.cats[c] = true;
+      renderSpecList();
+    });
+    specChips.appendChild(chip);
+  });
+}
+
+function renderSpecList() {
+  buildSpecChips();
+  var q = normStr(specFilter.value);
+  specItems.innerHTML = "";
+  var cats = Object.keys(relState.cats);
+  var shown = 0;
+  CAT_ORDER.forEach(function (c) {
+    if (cats.length && !relState.cats[c]) return;
+    var list = relState.items.filter(function (it) {
+      if (it.cat !== c) return false;
+      return matchRel(it, q);
+    });
+    if (!list.length) return;
+    var catEl = document.createElement("div");
+    catEl.className = "spec-cat";
+    catEl.textContent = c + " (" + list.length + ")";
+    specItems.appendChild(catEl);
+    list.forEach(function (it) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "spec-item";
+      if (relState.loaded && relState.loaded.kind === it.kind && relState.loaded.name === it.name) {
+        b.classList.add("active");
+      }
+      b.dataset.k = it.kind; b.dataset.n = it.name;
+      var k = document.createElement("span");
+      k.className = "spec-kind"; k.textContent = it.kind;
+      var nm = document.createElement("span");
+      nm.className = "nm"; nm.textContent = it.name;
+      b.appendChild(k); b.appendChild(nm);
+      if (it.age) {
+        var ag = document.createElement("span");
+        ag.className = "age";
+        ag.textContent = it.age;
+        ag.title = "created " + (it.created || it.age);
+        b.appendChild(ag);
+      }
+      if (it.snippet) {
+        var sn = document.createElement("div");
+        sn.className = "snip";
+        sn.title = it.snippet;
+        sn.appendChild(highlightFrag(it.snippet, relState.needle, false));
+        b.appendChild(sn);
+      }
+      b.addEventListener("click", function () { loadSpec(it); });
+      specItems.appendChild(b);
+      shown++;
+    });
+  });
+  if (!shown) {
+    var empty = document.createElement("div");
+    empty.className = "spec-cat error";
+    empty.textContent = relState.resultsOn ? "No matches in manifests." : "No matching resources.";
+    specItems.appendChild(empty);
+  }
+}
+
+function renderSpecBody() {
+  specBody.innerHTML = "";
+  specBody.appendChild(highlightFrag(relState.yaml || "", relState.needle.length >= 2 ? relState.needle : "", false));
+}
+
+function openSpec(tr) {
+  specTitle.textContent = tr.dataset.pod || "";
+  relState.tr = tr;
+  relState.items = [];
+  relState.base = [];
+  relState.cats = {};
+  relState.loaded = null;
+  relState.yaml = "";
+  relState.needle = "";
+  relState.resultsOn = false;
+  specFilter.value = "";
+  specSearch.value = "";
+  specChips.innerHTML = "";
+  specItems.innerHTML = "";
+  specMeta.innerHTML = "";
+  specBody.textContent = "Loading...";
+  specBody.className = "spec-body";
+  specModal.classList.remove("hidden");
+
+  var q = "ctx=" + encodeURIComponent(tr.dataset.ctx) +
+          "&ns=" + encodeURIComponent(tr.dataset.ns) +
+          "&pod=" + encodeURIComponent(tr.dataset.pod);
+  if (tr.dataset.node) q += "&node=" + encodeURIComponent(tr.dataset.node);
+
+  fetch("/api/related?" + q)
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      renderSpecMeta(tr, d);
+      relState.base = d.items || [];
+      relState.items = relState.base.slice();
+      if (!relState.items.length) {
+        var empty = document.createElement("div");
+        empty.className = "spec-cat error";
+        empty.textContent = d.error || "No related resources found.";
+        specItems.appendChild(empty);
+        specBody.textContent = (d.error || "No related resources found.") + " Check permissions on the context.";
+        specBody.className = "spec-body error";
+        return;
+      }
+      var dflt = relState.items.filter(function (it) { return it.kind === "deployment"; })[0] || relState.items[0];
+      relState.loaded = { kind: dflt.kind, name: dflt.name };
+      renderSpecList();
+      loadSpec(dflt);
+    })
+    .catch(function (err) {
+      specBody.textContent = "Failed to load resource list: " + err;
+      specBody.className = "spec-body error";
+    });
+}
+
+function loadSpec(it) {
+  relState.loaded = { kind: it.kind, name: it.name };
+  specItems.querySelectorAll(".spec-item").forEach(function (el) {
+    el.classList.toggle("active", el.dataset.k === it.kind && el.dataset.n === it.name);
+  });
+  specBody.textContent = "Loading " + it.kind + "/" + it.name + " ...";
+  specBody.className = "spec-body";
+  var q = "ctx=" + encodeURIComponent(relState.tr.dataset.ctx) +
+          "&ns=" + encodeURIComponent(relState.tr.dataset.ns) +
+          "&kind=" + encodeURIComponent(it.kind) +
+          "&name=" + encodeURIComponent(it.name);
+  fetch("/api/object?" + q)
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) {
+        specBody.textContent = d.error;
+        specBody.className = "spec-body error";
+      } else {
+        relState.yaml = d.yaml;
+        renderSpecBody();
+        specBody.className = "spec-body";
+      }
+    })
+    .catch(function (err) {
+      specBody.textContent = "Failed to load spec: " + err;
+      specBody.className = "spec-body error";
+    });
+}
+
+function closeSpec() {
+  specModal.classList.add("hidden");
+  specItems.innerHTML = "";
+  specChips.innerHTML = "";
+  specMeta.innerHTML = "";
+  specBody.textContent = "Loading...";
+  specBody.className = "spec-body";
+  specTitle.textContent = "";
+  relState = { tr: null, items: [], base: [], cats: {}, loaded: null, yaml: "", needle: "", resultsOn: false };
+}
+$("#btnSpecClose").addEventListener("click", closeSpec);
+
+specFilter.addEventListener("input", renderSpecList);
+
+function runContentSearch() {
+  var q = normStr(specSearch.value);
+  relState.needle = q;
+  var stale = relState.tr;
+  relState.items = relState.base.slice();
+  relState.resultsOn = false;
+  if (q.length < 2) {
+    renderSpecList();
+    renderSpecBody();
+    return;
+  }
+  var url = "/api/search?ctx=" + encodeURIComponent(stale.dataset.ctx) +
+            "&ns=" + encodeURIComponent(stale.dataset.ns) +
+            "&q=" + encodeURIComponent(q);
+  fetch(url).then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (relState.tr !== stale) return;
+      if (normStr(specSearch.value) !== q) return;
+      relState.resultsOn = true;
+      relState.items = (d.items || []).map(function (it) {
+        return { kind: it.kind, name: it.name, cat: it.cat, snippet: it.snippet || "" };
+      });
+      renderSpecList();
+      renderSpecBody();
+    })
+    .catch(function () { });
+}
+var specSearchTimer = null;
+specSearch.addEventListener("input", function () {
+  if (specSearchTimer) clearTimeout(specSearchTimer);
+  specSearchTimer = setTimeout(runContentSearch, 350);
+});
+
+tbody.addEventListener("click", function (e) {
+  if (e.target.closest && e.target.closest("input,select,button,a,label")) return;
+  var tr = e.target.closest ? e.target.closest("tr") : null;
+  if (tr && tr.dataset && tr.dataset.ix) openSpec(tr);
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape") return;
+  if (!modal.classList.contains("hidden")) { closeModal(); return; }
+  if (!specModal.classList.contains("hidden")) closeSpec();
+});
+modal.addEventListener("click", function (e) {
+  if (e.target === modal) closeModal();
+});
+specModal.addEventListener("click", function (e) {
+  if (e.target === specModal) closeSpec();
+});
+})();
+</script>
+
+{{end}}
