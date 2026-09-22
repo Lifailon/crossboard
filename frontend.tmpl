@@ -41,8 +41,11 @@ header h1{font-size:20px;margin:0;letter-spacing:.3px}
 .banner{margin:16px 22px 0;padding:10px 14px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca;border-radius:10px;font-size:13px;white-space:pre-wrap;word-break:break-word}
 
 /* ---------- cards ---------- */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 22px;max-width:1600px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 22px 6px;max-width:1600px;margin:0 auto}
+.cards.row2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));padding:6px 22px 16px}
 .card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:12px 14px 11px;overflow:hidden}
+.card[data-scope]{cursor:pointer;transition:transform .12s ease,border-color .12s ease}
+.card[data-scope]:hover{transform:translateY(-2px);border-color:var(--cc)}
 .card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--cc)}
 .card .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 .card .value{font-size:28px;font-weight:700;line-height:1.15;color:var(--cc);font-family:var(--mono)}
@@ -77,7 +80,7 @@ thead th.sorted{color:var(--accent)}
 thead th.sorted.asc::after{content:"\25B2";opacity:1}
 thead th.sorted.desc::after{content:"\25BC";opacity:1}
 tbody td{padding:8px 10px;border-bottom:1px solid rgba(34,48,79,.55);vertical-align:middle}
-tbody tr:hover{background:rgba(56,189,248,.045)}
+tbody tr:hover{background:rgba(56,189,248,.045);cursor:pointer}
 tfoot td{position:sticky;bottom:0;z-index:9;background:#0d1527;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-top:1px solid var(--line2)}
 tfoot td.sel{color:var(--accent);text-align:center;font-weight:700;font-family:var(--mono)}
 .col-chk{width:34px;text-align:center}
@@ -94,7 +97,7 @@ input[type=checkbox]{accent-color:var(--accent)}
 td.ctx{color:var(--accent);font-family:var(--mono);font-size:12px}
 td.ns{color:var(--text)}
 td.pod{color:#c9d6ee;font-family:var(--mono)}
-td.cont{color:var(--teal);font-family:var(--mono);cursor:pointer}
+td.cont{color:var(--teal);font-family:var(--mono)}
 td.node{color:var(--muted);font-family:var(--mono);font-size:12px}
 td.qos{color:var(--violet);font-size:12px}
 td.labels{max-width:240px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12px}
@@ -108,7 +111,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .spec-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px 20px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--muted)}
 .spec-meta b{color:var(--text);font-weight:600}
 .spec-meta .labs{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;font-family:var(--mono);font-size:11px;max-width:100%}
-.lchip{display:inline-flex;align-items:center;gap:3px;padding:1px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.lchip{display:inline-flex;align-items:center;gap:3px;padding:1px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);white-space:nowrap}
 .lchip .lk{color:var(--violet)}
 .lchip .lv{color:var(--teal)}
 .lchip .eq{color:var(--dim)}
@@ -129,8 +132,11 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .spec-item.active{background:rgba(56,189,248,.12);border-color:var(--accent)}
 .spec-kind{flex:0 0 auto;min-width:84px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);font-family:var(--mono)}
 .spec-item .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spec-item .sns{flex:0 0 auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.spec-item .scx{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--violet);font-family:var(--mono);white-space:nowrap;background:rgba(167,139,250,.1);padding:0 6px;border-radius:999px}
 .spec-item .age{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
-.spec-item .snip{flex:1 1 100%;min-width:0;margin-top:2px;font-size:10px;font-family:var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search-stat{font-size:10px;color:var(--dim);font-family:var(--mono);min-height:12px}
+.search-stat.hit{color:var(--accent)}
 .spec-body{flex:1;overflow:auto;padding:14px 18px;margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;color:#cdd9f0;white-space:pre-wrap;word-break:break-word;background:#070c19}
 .spec-body.error{color:var(--red)}
 
@@ -157,7 +163,15 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .lb-where{flex:0 0 auto;color:var(--teal);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 .lb-msg{white-space:pre-wrap;word-break:break-word;color:#cdd9f0;flex:1}
 .lb-msg mark{background:var(--warn);color:#1a1204;border-radius:3px;padding:0 2px}
-.spec-body mark,.spec-item mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
+.spec-body mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
+.spec-body .y-k{color:#2dd4bf}
+.spec-body .y-v{color:#c8d6f0}
+.spec-body .y-q{color:#7ee2a8}
+.spec-body .y-n{color:#ffc87a}
+.spec-body .y-b{color:#c29cff}
+.spec-body .y-c{color:#5a6b8c;font-style:italic}
+.spec-body .y-p{color:#7f95c0}
+.spec-body .y-a{color:#9adcff}
 .logline.logerr .lb-msg{color:var(--red)}
 .modal-foot{display:flex;align-items:center;gap:10px;padding:8px 16px;border-top:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--dim)}
 #selInfo{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-family:var(--mono);color:var(--muted)}
@@ -168,7 +182,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
   .updated{display:none}
 }
 @media (max-width:640px){
-  .cards{grid-template-columns:repeat(auto-fit,minmax(110px,1fr));padding:12px}
+  .cards,.cards.row2{grid-template-columns:repeat(2,1fr);padding:12px}
   .card .value{font-size:22px}
   .toolbar,.tablewrap{padding:0 12px}
   .modal{padding:0}
@@ -202,20 +216,28 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 {{end}}
 
 <section class="cards" id="cards">
-{{range .Cards}}
-  <div class="card {{.Color}}" title="{{.Hint}}">
+{{range $i,$c := .Cards}}{{if lt $i 8}}
+  <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
     <div class="label">{{.Label}}</div>
     <div class="value">{{.Value}}</div>
   </div>
-{{end}}
+{{end}}{{end}}
+</section>
+<section class="cards row2" id="cards2">
+{{range $i,$c := .Cards}}{{if ge $i 8}}
+  <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
+    <div class="label">{{.Label}}</div>
+    <div class="value">{{.Value}}</div>
+  </div>
+{{end}}{{end}}
 </section>
 
 <section class="toolbar">
   <div class="search-wrap">
-    <input id="fQ" type="search" placeholder="Filter by pod name / container..." autocomplete="off">
+    <input id="fQ" type="search" placeholder="Filter by pod or container name" autocomplete="off">
     <span class="ico">&#8981;</span>
   </div>
-  <select id="fCtx"><option value="">Context: all</option>{{range .Contexts}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select id="fCtx"><option value="">Cluster: all</option>{{range .Contexts}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNs"><option value="">Namespace: all</option>{{range .Namespaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNode"><option value="">Node: all</option>{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fPhase">
@@ -234,7 +256,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
         <thead>
           <tr>
             <th class="col-chk"><input type="checkbox" id="selectAll" title="Select all visible"></th>
-            <th data-key="ctx">Context</th>
+            <th data-key="ctx">Cluster</th>
             <th data-key="ns">Namespace</th>
             <th data-key="node">Node</th>
             <th data-key="pod">Pod</th>
@@ -331,8 +353,9 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
     <div class="spec-wrap">
       <nav class="spec-list">
         <div class="spec-tools">
-          <input id="specFilter" type="search" placeholder="Filter by kind/name" autocomplete="off">
-          <input id="specSearch" type="search" placeholder="Search in manifests..." autocomplete="off">
+          <input id="specFilter" type="search" placeholder="Filter by kind or name" autocomplete="off">
+          <input id="specSearch" type="search" placeholder="Search by manifest" autocomplete="off">
+          <span class="search-stat" id="searchStat"></span>
           <div class="spec-chips" id="specChips"></div>
         </div>
         <div class="spec-items" id="specItems"></div>
@@ -508,13 +531,13 @@ function fmtTime(t) {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
 
-function renderCards(cards) {
-  var host = $("#cards");
+function renderCards(host, cards) {
   host.innerHTML = "";
   cards.forEach(function (cd) {
     var div = document.createElement("div");
     div.className = "card " + cd.color;
     div.title = cd.hint;
+    if (cd.scope) div.dataset.scope = cd.scope;
     div.innerHTML = "<div class='label'></div><div class='value'></div>";
     div.querySelector(".label").textContent = cd.label;
     div.querySelector(".value").textContent = cd.value;
@@ -537,7 +560,7 @@ function fillSelect(sel, items, label) {
 }
 
 function renderSelects(ctxs, nss, nodes, phases) {
-  fillSelect(fCtx, ctxs, "Context: all");
+  fillSelect(fCtx, ctxs, "Cluster: all");
   fillSelect(fNs, nss, "Namespace: all");
   fillSelect(fNode, nodes, "Node: all");
   fillSelect(fPhase, phases, "Phase: all");
@@ -629,7 +652,10 @@ function renderTable(pods) {
 function renderAll(d) {
   var checked = {};
   tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
-  renderCards(d.cards || []);
+  window.__kubelogsData = d;
+  var cards = d.cards || [];
+  renderCards($("#cards"), cards.slice(0, 8));
+  renderCards($("#cards2"), cards.slice(8));
   renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || []);
   renderTable(d.pods || []);
   tbody.querySelectorAll(".row-check").forEach(function (cb) {
@@ -740,6 +766,125 @@ function highlightFrag(text, needle, cs) {
     last = m.index + m[0].length;
   }
   if (last < text.length) f.appendChild(document.createTextNode(text.slice(last)));
+  return f;
+}
+
+/* ---------- Лёгкая подсветка YAML-синтаксиса ----------
+ * Не настоящий парсер: ищем в строке "ключ: значение", окрашиваем ключи,
+ * строки, числа, булевы/null, комментарии и структурные символы. Устойчив
+ * к битому синтаксису — при любой неоднозначности строка выводится как есть,
+ * а исключение вообще гасится в plain-текст. Всегда работает через textContent,
+ * так что исходный YAML никогда не попадает в innerHTML.
+ */
+
+function splitYAMLKV(s) {
+  var inS = false, inD = false;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charAt(i);
+    if (c === "'" && !inD) inS = !inS;
+    else if (c === '"' && !inS) inD = !inD;
+    else if (c === ":" && !inS && !inD) {
+      var nx = s.charAt(i + 1);
+      if (nx === "" || nx === " " || nx === "\t" || nx === "}" || nx === "]" ||
+          nx === '"' || nx === "'" || nx === "{" || nx === "[") {
+        return [s.slice(0, i), s.slice(i + 1)];
+      }
+    }
+  }
+  return null;
+}
+
+function yamlValueClass(v) {
+  var t = v.trim();
+  if (t === "") return null;
+  if ((t.charAt(0) === '"' && t.charAt(t.length - 1) === '"') ||
+      (t.charAt(0) === "'" && t.charAt(t.length - 1) === "'")) return "y-q";
+  if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t)) return "y-n";
+  if (/^-?\d+(\.\d+)?[a-zA-Z]+$/.test(t)) return "y-n";
+  if (/^(true|false|yes|no|on|off|null|~)$/i.test(t)) return "y-b";
+  if (/^[|>][-+]?\d*$/.test(t)) return "y-p";
+  if (t.charAt(0) === "&" || t.charAt(0) === "*") return "y-a";
+  if (/^[\[\{]/.test(t)) return "y-p";
+  return "y-v";
+}
+
+function yamlPiece(cls, text, needle) {
+  var span = document.createElement("span");
+  if (cls) span.className = cls;
+  if (needle) {
+    var re = new RegExp(escRe(needle), "gi");
+    var last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) span.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var mk = document.createElement("mark");
+      mk.textContent = m[0];
+      span.appendChild(mk);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) span.appendChild(document.createTextNode(text.slice(last)));
+  } else {
+    span.appendChild(document.createTextNode(text));
+  }
+  return span;
+}
+
+function paintYamlLine(frag, line, needle) {
+  var add = function (cls, text) {
+    if (text === "") return;
+    frag.appendChild(yamlPiece(cls, text, needle));
+  };
+  try {
+    var ws = line.match(/^\s*/)[0];
+    add(null, ws);
+    var rest = line.slice(ws.length);
+    if (rest === "") return;
+    if (/^-{3}\s*$/.test(rest) || /^\.\.\.\s*$/.test(rest)) { add("y-p", rest); return; }
+    if (rest.charAt(0) === "#") { add("y-c", rest); return; }
+
+    var head = rest, dash = null;
+    var dm = rest.match(/^-\s+/);
+    if (dm) { dash = dm[0]; head = rest.slice(dm[0].length); }
+    if (dash) add("y-p", dash);
+
+    if (head === "") return;
+    if (head.charAt(0) === "#") { add("y-c", head); return; }
+
+    var kv = splitYAMLKV(head);
+    if (!kv) {
+      var cl = yamlValueClass(head);
+      if (!cl) cl = "y-v";
+      add(cl, head);
+      return;
+    }
+    if (kv[0] === "") { add("y-v", head); return; }
+
+    add("y-k", kv[0]);
+    add("y-p", ":");
+
+    var val = kv[1];
+    var ci = -1;
+    for (var i = 0; i < val.length; i++) {
+      if (val.charAt(i) === "#" && (i === 0 || /\s/.test(val.charAt(i - 1)))) { ci = i; break; }
+    }
+    var valText = ci >= 0 ? val.slice(0, ci) : val;
+    var cmt = ci >= 0 ? val.slice(ci) : "";
+    var vm = valText.match(/^(\s*)(.*)$/);
+    add(null, vm[1]);
+    if (vm[2] !== "") add(yamlValueClass(vm[2]), vm[2]);
+    if (cmt !== "") add("y-c", cmt);
+  } catch (e) {
+    frag.appendChild(document.createTextNode(line));
+  }
+}
+
+function yamlHighlight(src, needle) {
+  var f = document.createDocumentFragment();
+  if (!src) return f;
+  var lines = src.split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    paintYamlLine(f, lines[i], needle);
+    if (i < lines.length - 1) f.appendChild(document.createTextNode("\n"));
+  }
   return f;
 }
 
@@ -862,7 +1007,7 @@ $("#btnClose").addEventListener("click", closeModal);
 /* ================= resource browser ================= */
 
 var CAT_ORDER = ["Workload", "Network", "Config", "Storage", "Access", "Cluster", "Other"];
-var relState = { tr: null, items: [], base: [], cats: {}, loaded: null, yaml: "", needle: "", resultsOn: false };
+var relState = { tr: null, items: [], cats: {}, loaded: null, yaml: "", needle: "" };
 
 function normStr(s) { return (s || "").toLowerCase(); }
 
@@ -982,20 +1127,24 @@ function renderSpecList() {
       k.className = "spec-kind"; k.textContent = it.kind;
       var nm = document.createElement("span");
       nm.className = "nm"; nm.textContent = it.name;
-      b.appendChild(k); b.appendChild(nm);
+      b.appendChild(k);
+      if (it.ns) {
+        var sn = document.createElement("span");
+        sn.className = "sns"; sn.textContent = it.ns + "/";
+        b.appendChild(sn);
+      }
+      b.appendChild(nm);
+      if (it.ctx) {
+        var cy = document.createElement("span");
+        cy.className = "scx"; cy.textContent = it.ctx;
+        b.appendChild(cy);
+      }
       if (it.age) {
         var ag = document.createElement("span");
         ag.className = "age";
         ag.textContent = it.age;
         ag.title = "created " + (it.created || it.age);
         b.appendChild(ag);
-      }
-      if (it.snippet) {
-        var sn = document.createElement("div");
-        sn.className = "snip";
-        sn.title = it.snippet;
-        sn.appendChild(highlightFrag(it.snippet, relState.needle, false));
-        b.appendChild(sn);
       }
       b.addEventListener("click", function () { loadSpec(it); });
       specItems.appendChild(b);
@@ -1005,34 +1154,74 @@ function renderSpecList() {
   if (!shown) {
     var empty = document.createElement("div");
     empty.className = "spec-cat error";
-    empty.textContent = relState.resultsOn ? "No matches in manifests." : "No matching resources.";
+    empty.textContent = "No matching resources.";
     specItems.appendChild(empty);
   }
 }
 
 function renderSpecBody() {
   specBody.innerHTML = "";
-  specBody.appendChild(highlightFrag(relState.yaml || "", relState.needle.length >= 2 ? relState.needle : "", false));
+  specBody.appendChild(yamlHighlight(relState.yaml || "", relState.needle.length >= 2 ? relState.needle : ""));
+  updateSearchStat();
+}
+
+function countMatches(hay, nd) {
+  if (!nd || !hay) return 0;
+  var lh = hay.toLowerCase();
+  var c = 0, i = 0;
+  while ((i = lh.indexOf(nd, i)) !== -1) { c++; i += nd.length; }
+  return c;
+}
+
+function updateSearchStat() {
+  var el = document.getElementById("searchStat");
+  if (!el) return;
+  el.className = "search-stat";
+  var q = normStr(specSearch && specSearch.value);
+  if (q.length < 2) { el.textContent = ""; return; }
+  var n = countMatches(relState.yaml || "", q);
+  el.textContent = n + (n === 1 ? " match" : " matches");
+  if (n > 0) el.className = "search-stat hit";
+}
+
+function resetSpecModal() {
+  relState.cats = {};
+  relState.loaded = null;
+  relState.yaml = "";
+  relState.needle = "";
+  specFilter.value = "";
+  specSearch.value = "";
+  var st = document.getElementById("searchStat");
+  if (st) { st.textContent = ""; st.className = "search-stat"; }
+  specChips.innerHTML = "";
+  specItems.innerHTML = "";
+  specMeta.innerHTML = "";
+}
+
+function enterSpec(items, errorText) {
+  if (!items || !items.length) {
+    var msg = errorText || "No related resources found.";
+    var empty = document.createElement("div");
+    empty.className = "spec-cat error";
+    empty.textContent = msg;
+    specItems.appendChild(empty);
+    specBody.textContent = msg + " Check permissions on the cluster.";
+    specBody.className = "spec-body error";
+    return;
+  }
+  relState.items = items;
+  renderSpecList();
+  loadSpec(items[0]);
 }
 
 function openSpec(tr) {
   specTitle.textContent = tr.dataset.pod || "";
   relState.tr = tr;
   relState.items = [];
-  relState.base = [];
-  relState.cats = {};
-  relState.loaded = null;
-  relState.yaml = "";
-  relState.needle = "";
-  relState.resultsOn = false;
-  specFilter.value = "";
-  specSearch.value = "";
-  specChips.innerHTML = "";
-  specItems.innerHTML = "";
-  specMeta.innerHTML = "";
+  resetSpecModal();
+  specModal.classList.remove("hidden");
   specBody.textContent = "Loading...";
   specBody.className = "spec-body";
-  specModal.classList.remove("hidden");
 
   var q = "ctx=" + encodeURIComponent(tr.dataset.ctx) +
           "&ns=" + encodeURIComponent(tr.dataset.ns) +
@@ -1043,22 +1232,74 @@ function openSpec(tr) {
     .then(function (r) { return r.json(); })
     .then(function (d) {
       renderSpecMeta(tr, d);
-      relState.base = d.items || [];
-      relState.items = relState.base.slice();
-      if (!relState.items.length) {
-        var empty = document.createElement("div");
-        empty.className = "spec-cat error";
-        empty.textContent = d.error || "No related resources found.";
-        specItems.appendChild(empty);
-        specBody.textContent = (d.error || "No related resources found.") + " Check permissions on the context.";
-        specBody.className = "spec-body error";
-        return;
-      }
-      var dflt = relState.items.filter(function (it) { return it.kind === "deployment"; })[0] || relState.items[0];
-      relState.loaded = { kind: dflt.kind, name: dflt.name };
-      renderSpecList();
-      loadSpec(dflt);
+      enterSpec(d.items, d.error);
     })
+    .catch(function (err) {
+      specBody.textContent = "Failed to load resource list: " + err;
+      specBody.className = "spec-body error";
+    });
+}
+
+var CARD_SCOPE_TITLES = {
+  ctx: "Clusters", ns: "Namespaces", nodes: "Nodes", svc: "Services",
+  pvc: "Persistentvolumeclaims", notready: "Not ready", restarts: "Restarts"
+};
+
+function cardTitle(scope) { return CARD_SCOPE_TITLES[scope] || "Resources"; }
+
+// Список подов для клиентских карточек Not ready / Restarts — собирается из
+// уже загруженных данных (/api/pods), без лишних запросов.
+function cardItemsFromPods(scope) {
+  var d = window.__kubelogsData || {};
+  var pods = d.pods || [];
+  var map = {}, order = [];
+  pods.forEach(function (p) {
+    var key = p.context + "|" + p.namespace + "|" + p.name;
+    var e = map[key];
+    if (!e) {
+      e = map[key] = { ctx: p.context, ns: p.namespace, name: p.name, bad: 0, rests: 0, conts: [] };
+      order.push(key);
+    }
+    if (!p.ready) { e.bad++; e.conts.push(p.container + " not ready"); }
+    if ((p.restarts || 0) > e.rests) e.rests = p.restarts || 0;
+  });
+  var items = [];
+  order.forEach(function (key) {
+    var e = map[key];
+    var hit = scope === "notready" ? e.bad > 0 : e.rests > 0;
+    if (!hit) return;
+    items.push({
+      kind: "pod", name: e.name, cat: "Workload",
+      reason: scope === "notready" ? e.conts.join(", ")
+                                 : e.rests + (e.rests === 1 ? " restart" : " restarts"),
+      ctx: e.ctx, ns: e.ns
+    });
+  });
+  items.sort(function (a, b) {
+    if (a.ctx !== b.ctx) return a.ctx < b.ctx ? -1 : 1;
+    if (a.ns !== b.ns) return a.ns < b.ns ? -1 : 1;
+    if (a.name < b.name) return -1;
+    if (a.name > b.name) return 1;
+    return 0;
+  });
+  return items;
+}
+
+function openSpecList(scope) {
+  relState.tr = { dataset: {} };
+  relState.items = [];
+  specTitle.textContent = cardTitle(scope);
+  resetSpecModal();
+  specModal.classList.remove("hidden");
+  if (scope === "notready" || scope === "restarts") {
+    enterSpec(cardItemsFromPods(scope), "");
+    return;
+  }
+  specBody.textContent = "Loading...";
+  specBody.className = "spec-body";
+  fetch("/api/overview?scope=" + encodeURIComponent(scope))
+    .then(function (r) { return r.json(); })
+    .then(function (d) { enterSpec(d.items, d.error); })
     .catch(function (err) {
       specBody.textContent = "Failed to load resource list: " + err;
       specBody.className = "spec-body error";
@@ -1072,8 +1313,11 @@ function loadSpec(it) {
   });
   specBody.textContent = "Loading " + it.kind + "/" + it.name + " ...";
   specBody.className = "spec-body";
-  var q = "ctx=" + encodeURIComponent(relState.tr.dataset.ctx) +
-          "&ns=" + encodeURIComponent(relState.tr.dataset.ns) +
+  var tr = relState.tr || { dataset: {} };
+  var c = (it.ctx || tr.dataset.ctx || "");
+  var n = (it.ns || tr.dataset.ns || "");
+  var q = "ctx=" + encodeURIComponent(c) +
+          "&ns=" + encodeURIComponent(n) +
           "&kind=" + encodeURIComponent(it.kind) +
           "&name=" + encodeURIComponent(it.name);
   fetch("/api/object?" + q)
@@ -1102,43 +1346,21 @@ function closeSpec() {
   specBody.textContent = "Loading...";
   specBody.className = "spec-body";
   specTitle.textContent = "";
-  relState = { tr: null, items: [], base: [], cats: {}, loaded: null, yaml: "", needle: "", resultsOn: false };
+  relState = { tr: null, items: [], cats: {}, loaded: null, yaml: "", needle: "" };
 }
 $("#btnSpecClose").addEventListener("click", closeSpec);
 
 specFilter.addEventListener("input", renderSpecList);
 
-function runContentSearch() {
-  var q = normStr(specSearch.value);
-  relState.needle = q;
-  var stale = relState.tr;
-  relState.items = relState.base.slice();
-  relState.resultsOn = false;
-  if (q.length < 2) {
-    renderSpecList();
-    renderSpecBody();
-    return;
-  }
-  var url = "/api/search?ctx=" + encodeURIComponent(stale.dataset.ctx) +
-            "&ns=" + encodeURIComponent(stale.dataset.ns) +
-            "&q=" + encodeURIComponent(q);
-  fetch(url).then(function (r) { return r.json(); })
-    .then(function (d) {
-      if (relState.tr !== stale) return;
-      if (normStr(specSearch.value) !== q) return;
-      relState.resultsOn = true;
-      relState.items = (d.items || []).map(function (it) {
-        return { kind: it.kind, name: it.name, cat: it.cat, snippet: it.snippet || "" };
-      });
-      renderSpecList();
-      renderSpecBody();
-    })
-    .catch(function () { });
-}
+// Поиск по содержимому текущего манифеста — чисто на клиенте (данные уже
+// загружены в relState.yaml), без единого лишнего вызова kubectl.
 var specSearchTimer = null;
 specSearch.addEventListener("input", function () {
   if (specSearchTimer) clearTimeout(specSearchTimer);
-  specSearchTimer = setTimeout(runContentSearch, 350);
+  specSearchTimer = setTimeout(function () {
+    relState.needle = normStr(specSearch.value);
+    renderSpecBody();
+  }, 200);
 });
 
 tbody.addEventListener("click", function (e) {
@@ -1146,6 +1368,16 @@ tbody.addEventListener("click", function (e) {
   var tr = e.target.closest ? e.target.closest("tr") : null;
   if (tr && tr.dataset && tr.dataset.ix) openSpec(tr);
 });
+
+function bindCards(host) {
+  host.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("input,select,button,a")) return;
+    var el = e.target.closest ? e.target.closest(".card") : null;
+    if (el && el.dataset && el.dataset.scope) openSpecList(el.dataset.scope);
+  });
+}
+bindCards($("#cards"));
+bindCards($("#cards2"));
 
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;

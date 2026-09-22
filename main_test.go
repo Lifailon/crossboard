@@ -25,6 +25,7 @@ const samplePodJSON = `{
       },
       "spec": {
         "nodeName": "node-1",
+        "volumes": [{"persistentVolumeClaim": {"claimName": "web-data"}}],
         "containers": [{
           "name": "web", "image": "nginx:1.25",
           "resources": {
@@ -95,12 +96,16 @@ func TestSplitLines(t *testing.T) {
 }
 
 func TestParsePodList(t *testing.T) {
-	pods, err := parsePodList("ctx-prod", []byte(samplePodJSON), nil)
+	mounted := make(map[string]bool)
+	pods, err := parsePodList("ctx-prod", []byte(samplePodJSON), nil, mounted)
 	if err != nil {
 		t.Fatalf("parsePodList: %v", err)
 	}
 	if len(pods) != 3 {
 		t.Fatalf("expected 3 rows (web, init-x, db), got %d", len(pods))
+	}
+	if !mounted["prod|web-data"] {
+		t.Errorf("expected mounted PVC prod|web-data, got %v", mounted)
 	}
 
 	web := pods[0]
@@ -173,31 +178,28 @@ func TestJoinLabels(t *testing.T) {
 	}
 }
 
-func TestResString(t *testing.T) {
-	if got := resString("100m", "", "128Mi", "512Mi"); got != "100m/- · 128Mi/512Mi" {
-		t.Errorf("resString = %q", got)
-	}
-	if got := resString("", "", "", ""); got != "-/- · -/-" {
-		t.Errorf("resString empty = %q", got)
-	}
-}
-
-func TestResLive(t *testing.T) {
+func TestResPart(t *testing.T) {
 	// Использование относительно лимита.
-	if got, want := resLive("100m", "500m", "128Mi", "512Mi", "25m", "64Mi"), "25m/500m (5%) · 64Mi/512Mi (13%)"; got != want {
-		t.Errorf("resLive = %q, want %q", got, want)
+	if got, want := resPart("100m", "500m", "25m", cpuMilli), "25m/500m (5%)"; got != want {
+		t.Errorf("resPart cpu = %q, want %q", got, want)
 	}
 	// Лимита нет — процент от запрошенных ресурсов.
-	if got, want := resLive("200m", "", "128Mi", "", "50m", "32Mi"), "50m/200m (25%) · 32Mi/128Mi (25%)"; got != want {
-		t.Errorf("resLive no-limit = %q, want %q", got, want)
+	if got, want := resPart("200m", "", "50m", cpuMilli), "50m/200m (25%)"; got != want {
+		t.Errorf("resPart no-limit = %q, want %q", got, want)
 	}
 	// Без потребления — падает на req/lim.
-	if got, want := resLive("100m", "500m", "128Mi", "512Mi", "", ""), "100m/500m · 128Mi/512Mi"; got != want {
-		t.Errorf("resLive no-usage = %q, want %q", got, want)
+	if got, want := resPart("100m", "500m", "", cpuMilli), "100m/500m"; got != want {
+		t.Errorf("resPart no-usage = %q, want %q", got, want)
 	}
 	// Целые ядра и двоичные/десятичные суффиксы памяти.
-	if got, want := resLive("1", "2", "1Gi", "4Gi", "500m", "1Gi"), "500m/2 (25%) · 1Gi/4Gi (25%)"; got != want {
-		t.Errorf("resLive cores = %q, want %q", got, want)
+	if got, want := resPart("1", "2", "500m", cpuMilli), "500m/2 (25%)"; got != want {
+		t.Errorf("resPart cores = %q, want %q", got, want)
+	}
+	if got, want := resPart("128Mi", "512Mi", "64Mi", memBytes), "64Mi/512Mi (13%)"; got != want {
+		t.Errorf("resPart mem = %q, want %q", got, want)
+	}
+	if got, want := resPart("1Gi", "4Gi", "1Gi", memBytes), "1Gi/4Gi (25%)"; got != want {
+		t.Errorf("resPart GiB = %q, want %q", got, want)
 	}
 }
 
@@ -241,14 +243,14 @@ func TestAgeString(t *testing.T) {
 }
 
 func TestParsePodListInvalidJSON(t *testing.T) {
-	if _, err := parsePodList("ctx", []byte("{not json"), nil); err == nil {
+	if _, err := parsePodList("ctx", []byte("{not json"), nil, nil); err == nil {
 		t.Fatal("expected error for invalid json")
 	}
 }
 
 func TestParsePodListNoContainers(t *testing.T) {
 	data := []byte(`{"items":[{"metadata":{"name":"hang-pod","namespace":"ns"},"spec":{},"status":{"phase":"Pending"}}]}`)
-	pods, err := parsePodList("ctx", data, nil)
+	pods, err := parsePodList("ctx", data, nil, nil)
 	if err != nil {
 		t.Fatalf("parsePodList: %v", err)
 	}
@@ -290,22 +292,91 @@ func TestCollectStats(t *testing.T) {
 	if st.Restarts != 16 {
 		t.Errorf("Restarts = %d, want 16", st.Restarts)
 	}
-	if st.Issues != 1 {
-		t.Errorf("Issues = %d, want 1 (only Pending, Succeeded excluded)", st.Issues)
-	}
 }
 
 func TestBuildCards(t *testing.T) {
-	cards := buildCards(Stats{Contexts: 2, Namespaces: 3, Nodes: 4, Containers: 5})
-	if len(cards) != 9 {
-		t.Fatalf("len(cards) = %d, want 9", len(cards))
+	cards := buildCards(Stats{
+		AvailCtx: 2, Contexts: 3,
+		Namespaces: 3,
+		NodeReady:  4, NodeTotal: 5,
+		Pods: 10, PodsRunning: 8,
+		Containers: 20, Running: 15,
+		Services: 7,
+		CpuMilli: 1200, CpuTotalMilli: 4000,
+		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
+		PVCInUse: 2, PVCTotal: 5, PVCUsedBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
+		NotReady: 3, Restarts: 16,
+	})
+	if len(cards) != 12 {
+		t.Fatalf("len(cards) = %d, want 12", len(cards))
 	}
-	// Node-карточка стоит сразу после Namespaces.
-	if cards[1].Label != "Namespaces" || cards[2].Label != "Nodes" || cards[2].Value != 4 {
-		t.Errorf("cards order/values mismatch: %+v", cards)
+	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Services", "Not ready", "Restarts"}
+	row2 := []string{"CPU", "Memory", "PVC count", "PVC size"}
+	for i, l := range append(row1, row2...) {
+		if cards[i].Label != l {
+			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
+		}
 	}
-	if cards[0].Value != 2 || cards[4].Value != 5 {
-		t.Errorf("cards values mismatch: %+v", cards)
+	scopes := []string{"ctx", "ns", "nodes", "", "", "svc", "notready", "restarts", "", "", "pvc", "pvc"}
+	for i, s := range scopes {
+		if cards[i].Scope != s {
+			t.Errorf("cards[%d].Scope = %q, want %q (%s)", i, cards[i].Scope, s, cards[i].Label)
+		}
+	}
+	if cards[0].Value != "2/3" || cards[2].Value != "4/5" {
+		t.Errorf("clusters/nodes = %+v", cards)
+	}
+	if cards[3].Value != "8/10" || cards[4].Value != "15/20" || cards[5].Value != "7" {
+		t.Errorf("pods/containers/services = %+v", cards[:6])
+	}
+	if cards[6].Value != "3" || cards[7].Value != "16" {
+		t.Errorf("not ready/restarts = %+v", cards[6:8])
+	}
+	if cards[8].Value != "1.20 / 4.00" || cards[8].Hint != "cores in use / allocatable" {
+		t.Errorf("cpu card: %+v", cards[8])
+	}
+	if cards[9].Value != "2.00 / 4.00 GiB" {
+		t.Errorf("memory card: %+v", cards[9])
+	}
+	if cards[10].Value != "2/5" {
+		t.Errorf("pvc count card: %+v", cards[10])
+	}
+	if cards[11].Value != "1.00 / 2.00 GiB" || cards[11].Label != "PVC size" {
+		t.Errorf("pvc size card: %+v", cards[11])
+	}
+}
+
+func TestVolumeCountValue(t *testing.T) {
+	if got := volumeCountValue(Stats{PVCOk: 1, PVCInUse: 2, PVCTotal: 5}); got != "2/5" {
+		t.Errorf("volumeCountValue ok = %q, want 2/5", got)
+	}
+	if got := volumeCountValue(Stats{PVCInUse: 3}); got != "3" {
+		t.Errorf("volumeCountValue fallback = %q, want 3", got)
+	}
+	if got := volumeCountValue(Stats{}); got != "0" {
+		t.Errorf("volumeCountValue empty = %q, want 0", got)
+	}
+}
+
+func TestServicesByContext(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") != "--context c1 get svc -A -o json" {
+			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+		}
+		return []byte(`{"items":[{},{},{}]}`), nil
+	}
+	if n := servicesByContext("c1"); n != 3 {
+		t.Errorf("services = %d, want 3", n)
+	}
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte("Forbidden"), fmt.Errorf("exit status 1")
+	}
+	if n := servicesByContext("c1"); n != 0 {
+		t.Errorf("services on RBAC error = %d, want 0", n)
 	}
 }
 
@@ -519,12 +590,11 @@ func TestRunLogStreamKillsOnCancel(t *testing.T) {
 // ---------- HTTP-хендлеры ----------
 
 func withFakes(t *testing.T, pods []Pod, ctxs []string) func() {
-	oldPods, oldCtx, oldNodes := fetchPodsFn, getContextsFn, fetchNodesFn
-	fetchPodsFn = func() ([]Pod, string) { return pods, "" }
+	oldF, oldCtx := fetchAllFn, getContextsFn
+	fetchAllFn = func() Overview { return Overview{Pods: pods, TotalCtx: len(ctxs), AvailCtx: len(ctxs)} }
 	getContextsFn = func() ([]string, error) { return ctxs, nil }
-	fetchNodesFn = func() int { return 0 }
 	return func() {
-		fetchPodsFn, getContextsFn, fetchNodesFn = oldPods, oldCtx, oldNodes
+		fetchAllFn, getContextsFn = oldF, oldCtx
 	}
 }
 
@@ -561,7 +631,7 @@ func TestIndexHandlerRendersPage(t *testing.T) {
 		"db-0",
 		"k8s-prod",
 		"nginx:1.25",
-		"Contexts",
+		"Clusters",
 		"Namespaces",
 		"row-check",
 		"CrashLoopBackOff",
@@ -591,11 +661,12 @@ func TestIndexHandlerNoData(t *testing.T) {
 }
 
 func TestIndexHandlerFetchErrorShown(t *testing.T) {
-	oldPods, oldCtx, oldNodes := fetchPodsFn, getContextsFn, fetchNodesFn
-	fetchPodsFn = func() ([]Pod, string) { return nil, "kubectl: access denied for cluster A" }
+	oldF, oldCtx := fetchAllFn, getContextsFn
+	fetchAllFn = func() Overview {
+		return Overview{Error: "kubectl: access denied for cluster A", TotalCtx: 1}
+	}
 	getContextsFn = func() ([]string, error) { return []string{"c1"}, nil }
-	fetchNodesFn = func() int { return 0 }
-	defer func() { fetchPodsFn, getContextsFn, fetchNodesFn = oldPods, oldCtx, oldNodes }()
+	defer func() { fetchAllFn, getContextsFn = oldF, oldCtx }()
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -630,11 +701,11 @@ func TestAPIHandlerJSON(t *testing.T) {
 	if len(data.Pods) != 2 {
 		t.Errorf("len(Pods) = %d, want 2", len(data.Pods))
 	}
-	if data.Stats.Contexts != 1 || data.Stats.Issues != 1 {
+	if data.Stats.Contexts != 1 || data.Stats.AvailCtx != 1 {
 		t.Errorf("stats mismatch: %+v", data.Stats)
 	}
-	if len(data.Cards) != 9 {
-		t.Errorf("len(Cards) = %d, want 9", len(data.Cards))
+	if len(data.Cards) != 12 {
+		t.Errorf("len(Cards) = %d, want 12", len(data.Cards))
 	}
 }
 
@@ -767,12 +838,15 @@ func TestFetchPodsRealFallsBackToDefaultNamespace(t *testing.T) {
 	}
 	defer withFakeKubectl(t, fn)()
 
-	pods, errMsg := fetchPodsReal()
-	if errMsg != "" {
-		t.Fatalf("errMsg = %q", errMsg)
+	ov := fetchAllReal()
+	if ov.Error != "" {
+		t.Fatalf("errMsg = %q", ov.Error)
 	}
-	if len(pods) != 3 {
-		t.Fatalf("len(pods) = %d, want 3", len(pods))
+	if len(ov.Pods) != 3 {
+		t.Fatalf("len(pods) = %d, want 3", len(ov.Pods))
+	}
+	if ov.AvailCtx != 1 || ov.TotalCtx != 1 {
+		t.Errorf("availability = %d/%d, want 1/1", ov.AvailCtx, ov.TotalCtx)
 	}
 	foundFallback := false
 	for _, c := range calls {
@@ -797,12 +871,12 @@ func TestFetchPodsRealNoFallbackWhenAllWorks(t *testing.T) {
 	}
 	defer withFakeKubectl(t, fn)()
 
-	pods, errMsg := fetchPodsReal()
-	if errMsg != "" {
-		t.Fatalf("errMsg = %q", errMsg)
+	ov := fetchAllReal()
+	if ov.Error != "" {
+		t.Fatalf("errMsg = %q", ov.Error)
 	}
-	if len(pods) != 3 {
-		t.Fatalf("len(pods) = %d, want 3", len(pods))
+	if len(ov.Pods) != 3 {
+		t.Fatalf("len(pods) = %d, want 3", len(ov.Pods))
 	}
 	for _, c := range calls {
 		if strings.Contains(c, "config view") || strings.Contains(c, "get pods -n") {
@@ -821,12 +895,81 @@ func TestFetchPodsRealBothFailuresReported(t *testing.T) {
 	}
 	defer withFakeKubectl(t, fn)()
 
-	pods, errMsg := fetchPodsReal()
-	if len(pods) != 0 {
-		t.Errorf("len(pods) = %d, want 0", len(pods))
+	ov := fetchAllReal()
+	if len(ov.Pods) != 0 {
+		t.Errorf("len(pods) = %d, want 0", len(ov.Pods))
 	}
-	if !strings.Contains(errMsg, "default") {
-		t.Errorf("errMsg должен упоминать fallback namespace: %q", errMsg)
+	if ov.AvailCtx != 0 {
+		t.Errorf("AvailCtx = %d, want 0", ov.AvailCtx)
+	}
+	if !strings.Contains(ov.Error, "default") {
+		t.Errorf("errMsg должен упоминать fallback namespace: %q", ov.Error)
+	}
+}
+
+func TestNodesContextParsesJSON(t *testing.T) {
+	fn := func(args ...string) ([]byte, error) {
+		return []byte(`{"items":[
+			{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}],"allocatable":{"cpu":"2","memory":"8127596Ki"}}},
+			{"metadata":{"name":"n2"},"status":{"conditions":[{"type":"Ready","status":"Unknown"}],"allocatable":{"cpu":"500m","memory":"1Gi"}}},
+			{"metadata":{"name":"n3"},"status":{"conditions":[{"type":"Ready","status":"False"}],"allocatable":{"cpu":"1","memory":"512Mi"}}}
+		]}`), nil
+	}
+	defer withFakeKubectl(t, fn)()
+	ready, total, cpu, mem := nodesContext("c1")
+	if ready != 1 || total != 3 {
+		t.Errorf("ready/total = %d/%d, want 1/3", ready, total)
+	}
+	if cpu != 3500 { // 2 + 500m + 1
+		t.Errorf("cpu = %d, want 3500", cpu)
+	}
+	if mem != 8127596<<10+1<<30+512<<20 {
+		t.Errorf("mem = %d, want sum of allocatable", mem)
+	}
+}
+
+func TestPVCByContextParsesJSON(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") != "--context c1 get pvc -A -o json" {
+			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+		}
+		return []byte(`{"items":[
+			{"metadata":{"name":"web-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
+			{"metadata":{"name":"db-data","namespace":"prod"},"spec":{"resources":{"requests":{"storage":"200Gi"}}}},
+			{"metadata":{"name":"logs","namespace":"ops"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
+		]}`), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	inUse, total, used, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true})
+	if !ok {
+		t.Error("ok = false, want true")
+	}
+	if inUse != 1 || total != 3 {
+		t.Errorf("inUse/total = %d/%d, want 1/3", inUse, total)
+	}
+	if used != 10<<30 || totalBytes != 215<<30 {
+		t.Errorf("used = %d, total = %d; want 10GiB, 215GiB", used, totalBytes)
+	}
+}
+
+func TestPVCByContextRBACDeniedFallsBackToMounted(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte("Error from server (Forbidden): persistentvolumeclaims is forbidden"), fmt.Errorf("exit status 1")
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	inUse, total, used, totalBytes, ok := pvcByContext("c1", map[string]bool{"prod|web-data": true, "ops|logs": true})
+	if ok {
+		t.Error("ok = true, want false when listing denied")
+	}
+	if inUse != 2 {
+		t.Errorf("inUse = %d, want 2 (fallback to mounted)", inUse)
+	}
+	if total != 0 || used != 0 || totalBytes != 0 {
+		t.Errorf("expected zeros, got total=%d used=%d bytes=%d", total, used, totalBytes)
 	}
 }
 
@@ -891,6 +1034,206 @@ func TestObjectHandlerMissingName(t *testing.T) {
 	handleObject(rec, req)
 	if !strings.Contains(rec.Body.String(), "no object name") {
 		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestClusterSnippetYAML(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") != "config view -o json" {
+			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+		}
+		return []byte(`{
+			"current-context":"c1",
+			"contexts":[{"name":"c1","context":{"cluster":"prod","user":"u1","namespace":"kube-system"}}],
+			"clusters":[{"name":"prod","cluster":{"server":"https://10.0.0.1:6443","certificate-authority-data":"Y2E="}}],
+			"users":[{"name":"u1","user":{"token":"t0k3n"}}]
+		}`), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	y, err := clusterSnippetYAML("c1")
+	if err != nil {
+		t.Fatalf("clusterSnippetYAML: %v", err)
+	}
+	for _, want := range []string{
+		`current-context: "c1"`,
+		`    cluster: "prod"`,
+		`    user: "u1"`,
+		`    namespace: "kube-system"`,
+		`    server: "https://10.0.0.1:6443"`,
+		`certificate-authority-data: "Y2E="`,
+		`    token: "t0k3n"`,
+	} {
+		if !strings.Contains(y, want) {
+			t.Errorf("snippet не содержит %q:\n%s", want, y)
+		}
+	}
+
+	if _, err := clusterSnippetYAML("nope"); err == nil {
+		t.Error("ожидалась ошибка для отсутствующего контекста")
+	}
+}
+
+func TestObjectHandlerClusterScope(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "config view -o json" {
+			return []byte(`{"contexts":[{"name":"c1","context":{"cluster":"prod","user":"u1"}}]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/object?ctx=c1&kind=cluster&name=c1", nil)
+	rec := httptest.NewRecorder()
+	handleObject(rec, req)
+	if !strings.Contains(rec.Body.String(), `"yaml"`) || !strings.Contains(rec.Body.String(), `kind: Config`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestObjectHandlerSkipsNSForClusterScoped(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if strings.Contains(j, "-n ") {
+			return nil, fmt.Errorf("cluster-scoped: namespace flag forbidden: %s", j)
+		}
+		return []byte("apiVersion: v1\nkind: Node\nmetadata:\n  name: n1\n"), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/object?ctx=c1&kind=node&name=n1", nil)
+	rec := httptest.NewRecorder()
+	handleObject(rec, req)
+	if rec.Body.String() == "" || strings.Contains(rec.Body.String(), `"error":"cluster-scoped`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestOverviewScopes(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	getContextsFn = func() ([]string, error) { return []string{"c1", "c2"}, nil }
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+
+	runPVC := `{"items":[
+		{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
+		{"metadata":{"name":"logs","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
+	]}`
+	runSVC := `{"items":[{"metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}]}`
+	runNodes := `{"items":[
+		{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
+		{"metadata":{"name":"n2"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}
+	]}`
+	runNS := `{"items":[{"metadata":{"name":"default"},"status":{"phase":"Active"}}]}`
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		switch {
+		case strings.Contains(j, "get persistentvolumeclaims"):
+			return []byte(runPVC), nil
+		case strings.Contains(j, "get services"):
+			return []byte(runSVC), nil
+		case strings.Contains(j, "get nodes"):
+			return []byte(runNodes), nil
+		case strings.Contains(j, "get namespaces"):
+			return []byte(runNS), nil
+		}
+		return []byte("unexpected: " + j), fmt.Errorf("unexpected")
+	}
+
+	call := func(scope string) relatedResp {
+		req := httptest.NewRequest(http.MethodGet, "/api/overview?scope="+scope, nil)
+		rec := httptest.NewRecorder()
+		handleOverview(rec, req)
+		var r relatedResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+			t.Fatalf("scope %s: bad json: %v", scope, err)
+		}
+		return r
+	}
+
+	// pvc: оба контекста, у каждого по 2 PVC → 4 элемента с ёмкостью.
+	r := call("pvc")
+	if len(r.Items) != 4 {
+		t.Fatalf("pvc items = %d, want 4", len(r.Items))
+	}
+	found := false
+	for _, it := range r.Items {
+		if it.Kind != "persistentvolumeclaim" || it.Ns == "" || it.Ctx == "" || it.Reason != "10.00 GiB" && it.Reason != "5.00 GiB" {
+			t.Errorf("pvc item = %+v", it)
+		}
+		if it.Name == "web" && it.Ns == "prod" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("pvc web/prod не найден: %+v", r.Items)
+	}
+
+	// svc: 2 контекста × 1 сервис.
+	r = call("svc")
+	if len(r.Items) != 2 || r.Items[0].Kind != "service" || r.Items[0].Ns == "" {
+		t.Errorf("svc items = %+v", r.Items)
+	}
+
+	// nodes: ready/not ready.
+	r = call("nodes")
+	if len(r.Items) != 4 {
+		t.Fatalf("nodes items = %d, want 4", len(r.Items))
+	}
+	got := map[string]string{}
+	for _, it := range r.Items {
+		if it.Ns != "" {
+			t.Errorf("node ns должен быть пуст: %+v", it)
+		}
+		got[it.Name] = it.Reason
+	}
+	if got["n1"] != "ready" || got["n2"] != "not ready" {
+		t.Errorf("node reasons = %v", got)
+	}
+
+	// ns: namespace + phase.
+	r = call("ns")
+	if len(r.Items) != 2 || r.Items[0].Kind != "namespace" || r.Items[0].Reason != "Active" {
+		t.Errorf("ns items = %+v", r.Items)
+	}
+
+	// ctx: список контекстов.
+	r = call("ctx")
+	if len(r.Items) != 2 || r.Items[0].Kind != "cluster" || r.Items[0].Name != "c1" || r.Items[0].Ctx != "c1" {
+		t.Errorf("ctx items = %+v", r.Items)
+	}
+}
+
+func TestOverviewScopeRBACSkipsDeniedContext(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	getContextsFn = func() ([]string, error) { return []string{"a", "b"}, nil }
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if strings.Contains(j, `--context a`) {
+			return []byte("Forbidden"), fmt.Errorf("exit status 1")
+		}
+		if strings.Contains(j, "--context b") && strings.Contains(j, "get services") {
+			return []byte(`{"items":[{"metadata":{"name":"api","namespace":"ops"}}]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/overview?scope=svc", nil)
+	rec := httptest.NewRecorder()
+	handleOverview(rec, req)
+	var r relatedResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if len(r.Items) != 1 || r.Items[0].Ctx != "b" {
+		t.Errorf("должен остаться только доступный контекст: %+v", r.Items)
+	}
+	if r.Error != "" {
+		t.Errorf("error не ожидался: %q", r.Error)
 	}
 }
 
@@ -1066,34 +1409,5 @@ func TestGatherDataGeneratedTime(t *testing.T) {
 	after := time.Now().Add(time.Minute)
 	if data.Generated.Before(before) || data.Generated.After(after) {
 		t.Errorf("Generated вне диапазона: %v", data.Generated)
-	}
-}
-
-func TestSpecSearchFindsMatchInManifests(t *testing.T) {
-	oldRun := runKubectlFn
-	runKubectlFn = func(args ...string) ([]byte, error) {
-		j := strings.Join(args, " ")
-		if strings.Contains(j, "get configmaps") && strings.Contains(j, "-o yaml") {
-			return []byte("apiVersion: v1\nitems:\n- apiVersion: v1\n" +
-				"  kind: ConfigMap\n  metadata:\n    name: app-cm\n  data:\n" +
-				"    KEY: \"superSecretValue\"\n"), nil
-		}
-		if strings.Contains(j, "-o yaml") {
-			return []byte("apiVersion: v1\nitems: []\n"), nil
-		}
-		return []byte(""), nil
-	}
-	defer func() { runKubectlFn = oldRun }()
-
-	resp := searchManifests("c1", "prod", "supersecret")
-	if len(resp) != 1 {
-		t.Fatalf("matches = %d, want 1: %+v", len(resp), resp)
-	}
-	hit := resp[0]
-	if hit.Kind != "configmap" || hit.Name != "app-cm" {
-		t.Errorf("hit = %+v, want configmap/app-cm", hit)
-	}
-	if !strings.Contains(hit.Snippet, "superSecretValue") {
-		t.Errorf("snippet потерял значение: %+v", hit)
 	}
 }
