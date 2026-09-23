@@ -23,8 +23,54 @@ import (
 )
 
 const (
-	listenAddr = ":8866"
-	tmplFile   = "frontend.tmpl"
+	defaultPort = ":8866"
+	// defaultCacheTTL — TTL кеша агрегированных данных по умолчанию (можно
+	// переопределить переменной окружения CACHE, значение в секундах).
+	defaultCacheTTL = 10 * time.Second
+	tmplFile        = "frontend.tmpl"
+)
+
+// getenv — переопределяемая в тестах обёртка над os.Getenv.
+var getenv = os.Getenv
+
+// envOr возвращает значение переменной окружения key, обрезая пробелы;
+// если переменная пустая/не задана — возвращает def.
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+// envDurationSeconds возвращает количество секунд из переменной окружения key;
+// при пустом значении или ошибке парсинга возвращает def. Значение 0 допускается
+// (например, CACHE=0 — кеш агрегированных данных отключён).
+func envDurationSeconds(key string, def time.Duration) time.Duration {
+	if raw := envOr(key, ""); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return def
+}
+
+// Kubectl-вызовы ограничены: maxParallelKubectl одновременных kubectl-процессов
+// и maxCtxParallel параллельных проходов по кластерам. Предотвращает всплеск
+// нагрузки при большом числе контекстов.
+const (
+	maxParallelKubectl = 8
+	maxCtxParallel     = 8
+)
+
+// kubectlTimeout — таймаут на один kubectl-вызов при сборе агрегированных
+// данных. Зависший kubectl не должен блокировать снапшот навсегда.
+var kubectlTimeout = 30 * time.Second
+
+var (
+	// listenAddr — адрес HTTP-сервера, по умолчанию :8866, задаётся через PORT.
+	listenAddr = ":" + envOr("PORT", defaultPort[1:])
+	// dataTTL — время жизни кеша агрегированных данных. 0 — кеш отключён.
+	dataTTL = envDurationSeconds("CACHE", defaultCacheTTL)
 )
 
 // ---------------------------------------------------------------------------
@@ -376,9 +422,19 @@ type Overview struct {
 	NS            map[string]NSStats // разбивка по "ctx|ns" для клиентских фильтров
 }
 
+// kubectlSem ограничивает число одновременно работающих kubectl-процессов.
+var kubectlSem = make(chan struct{}, maxParallelKubectl)
+
 // runKubectl выполняет kubectl с переданными аргументами и возвращает вывод.
+// Вызов ограничен семафором (максимум maxParallelKubectl одновременных) и
+// таймаутом kubectlTimeout.
 func runKubectl(args ...string) ([]byte, error) {
-	return exec.Command("kubectl", args...).CombinedOutput()
+	kubectlSem <- struct{}{}
+	defer func() { <-kubectlSem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), kubectlTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
 }
 
 // trimToJSON отбрасывает всё до первой '{' — kubectl может печатать предупреждения
@@ -443,10 +499,13 @@ func fetchAllReal() Overview {
 	var pods []Pod
 	var errs []string
 
+	ctxSem := make(chan struct{}, maxCtxParallel)
 	for _, ctx := range ctxs {
 		wg.Add(1)
 		go func(ctx string) {
 			defer wg.Done()
+			ctxSem <- struct{}{}
+			defer func() { <-ctxSem }()
 			usage := topPodsUsage(ctx)
 			var cpuM int64
 			var memB int64
@@ -492,11 +551,13 @@ func fetchAllReal() Overview {
 			pvcNS := pvcByContextNS(ctx, mounted)
 			scNS := scByContext(ctx)
 			pvCap := pvCapacityByContext(ctx)
-			netNS := networksByContextNS(ctx)
-			svcNS := servicesByContextNS(ctx)
+			netNS, svcNS := networksAndServicesByContextNS(ctx)
 			chartNS := chartsByContextNS(ctx)
-			jobNS := countKubectlKindsNS(ctx, scopeKinds("jobs"))
-			cfgNS := countKubectlKindsNS(ctx, scopeKinds("configs"))
+			// Один вызов kubectl на Jobs+CronJobs+ConfigMaps+Secrets,
+			// затем разбивка по категориям внутри.
+			byKind := countKindsByKindNS(ctx, append(scopeKinds("jobs"), scopeKinds("configs")...))
+			jobNS := mergeKindsNS(filterKinds(byKind, "job", "cronjob"))
+			cfgNS := mergeKindsNS(filterKinds(byKind, "configmap", "secret"))
 			evNS := eventsByContextNS(ctx)
 			nsStats := make(map[string]NSStats)
 			addNS := func(ns string, fn func(*NSStats)) {
@@ -879,24 +940,38 @@ func servicesByContext(ctx string) int {
 	return n
 }
 
+// networksAndServicesByContextNS возвращает число сетевых ресурсов и отдельно
+// Service по namespace кластера одним вызовом kubectl. Service включаются в
+// Networks карточки вместе с Ingress/NetworkPolicy/Endpoints/EndpointSlice, но
+// карточка Service требует отдельного числа. Ключи — namespace; Cluster-scoped
+// ресурсы (egress-политики) попадают под "cluster".
+func networksAndServicesByContextNS(ctx string) (netByNS map[string]int, svcByNS map[string]int) {
+	kinds := scopeKinds("svc")
+	kinds = append(kinds, egressKinds(ctx)...)
+	byKind := countKindsByKindNS(ctx, kinds)
+	netByNS = make(map[string]int)
+	svcByNS = make(map[string]int)
+	for kind, byNS := range byKind {
+		dst := netByNS
+		if kind == "service" {
+			dst = svcByNS
+		}
+		for ns, v := range byNS {
+			if ns == "" {
+				ns = "cluster"
+			}
+			dst[ns] += v.total
+		}
+	}
+	return netByNS, svcByNS
+}
+
 // networksByContextNS возвращает число сетевых ресурсов кластера по namespace:
 // Service, Ingress, NetworkPolicy, Endpoints, EndpointSlice (и egress-политики,
 // если они установлены отдельными CRD).
 func networksByContextNS(ctx string) map[string]int {
-	kinds := scopeKinds("svc")
-	kinds = append(kinds, egressKinds(ctx)...)
-	byNS := make(map[string]int)
-	for ns, v := range countKubectlKindsNS(ctx, kinds) {
-		byNS[ns] += v.total
-	}
-	// egress-политики на уровне кластера не имеют namespace.
-	for ns, v := range byNS {
-		if ns == "" {
-			byNS["cluster"] += v
-			delete(byNS, ns)
-		}
-	}
-	return byNS
+	netByNS, _ := networksAndServicesByContextNS(ctx)
+	return netByNS
 }
 
 // chartsByContextNS возвращает число helm-релизов кластера по namespace.
@@ -1078,7 +1153,7 @@ func helmReleaseYAML(ctx, ns, release string) (string, error) {
 		return "", err
 	}
 	lines := []string{
-		"# kubelogs: helm release decoded from secret " + secret,
+		"# crossboard: helm release decoded from secret " + secret,
 	}
 	str := func(m map[string]interface{}, ks ...string) string {
 		for _, k := range ks {
@@ -1233,11 +1308,11 @@ type nsKinds struct {
 	total, done int
 }
 
-// countKubectlKindsNS считает количество объектов всех указанных типов по
-// namespace одного кластера одним вызовом kubectl. Ключ — namespace ("cluster"
-// для Cluster-scoped ресурсов). done — число успешно завершённых Job.
-// Пустая карта при ошибке/нет прав.
-func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
+// countKindsByKindNS считает количество объектов каждого типа по namespace
+// кластера одним вызовом kubectl. Ключ первого уровня — kind (нижний регистр,
+// без суффикса "list"), второго — namespace. done — число успешно завершённых
+// Job. Пустая карта при ошибке/нет прав.
+func countKindsByKindNS(ctx string, ks []kubeKind) map[string]map[string]nsKinds {
 	if len(ks) == 0 {
 		return nil
 	}
@@ -1253,19 +1328,24 @@ func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
 	if json.Unmarshal(trimToJSON(out), &ml) != nil {
 		return nil
 	}
-	byNS := make(map[string]nsKinds)
-	acc := func(ns, kind string, succeeded, failed int) {
-		k := byNS[ns]
+	byKind := make(map[string]map[string]nsKinds)
+	acc := func(ns, rawKind string, succeeded, failed int) {
+		kind := strings.ToLower(rawKind)
+		m := byKind[kind]
+		if m == nil {
+			m = make(map[string]nsKinds)
+			byKind[kind] = m
+		}
+		k := m[ns]
 		k.total++
-		if strings.ToLower(kind) == "job" && jobSucceeded(succeeded, failed) {
+		if kind == "job" && jobSucceeded(succeeded, failed) {
 			k.done++
 		}
-		byNS[ns] = k
+		m[ns] = k
 	}
-	for _, raw := range ml.Items {
+	parseObj := func(raw json.RawMessage) {
 		var e struct {
-			Kind     string            `json:"kind"`
-			Items    []json.RawMessage `json:"items"`
+			Kind     string `json:"kind"`
 			Metadata struct {
 				Name      string `json:"name"`
 				Namespace string `json:"namespace"`
@@ -1276,12 +1356,25 @@ func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
 			} `json:"status"`
 		}
 		if json.Unmarshal(raw, &e) != nil {
+			return
+		}
+		if e.Metadata.Name == "" {
+			return
+		}
+		acc(e.Metadata.Namespace, e.Kind, e.Status.Succeeded, e.Status.Failed)
+	}
+	for _, raw := range ml.Items {
+		var sub struct {
+			Kind  string             `json:"kind"`
+			Items []json.RawMessage  `json:"items"`
+		}
+		if json.Unmarshal(raw, &sub) != nil {
 			continue
 		}
-		if len(e.Items) > 0 {
-			// Вложенный формат: каждый под-List с собственным kind.
-			kind := strings.ToLower(strings.TrimSuffix(e.Kind, "List"))
-			for _, iraw := range e.Items {
+		if len(sub.Items) > 0 {
+			// Вложенный формат: под-List с собственным kind.
+			kind := strings.ToLower(strings.TrimSuffix(sub.Kind, "List"))
+			for _, iraw := range sub.Items {
 				var it struct {
 					Metadata struct {
 						Namespace string `json:"namespace"`
@@ -1295,17 +1388,61 @@ func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
 				if json.Unmarshal(iraw, &it) == nil {
 					ns = it.Metadata.Namespace
 				}
-				acc(ns, kind, it.Status.Succeeded, it.Status.Failed)
+				m := byKind[kind]
+				if m == nil {
+					m = make(map[string]nsKinds)
+					byKind[kind] = m
+				}
+				k := m[ns]
+				k.total++
+				if kind == "job" && jobSucceeded(it.Status.Succeeded, it.Status.Failed) {
+					k.done++
+				}
+				m[ns] = k
 			}
 			continue
 		}
-		if e.Metadata.Name == "" {
+		if sub.Kind == "" {
 			continue
 		}
-		// Плоский формат: объект с собственным kind.
-		acc(e.Metadata.Namespace, e.Kind, e.Status.Succeeded, e.Status.Failed)
+		// Плоский объект с собственным kind.
+		parseObj(raw)
+	}
+	return byKind
+}
+
+// mergeKindsNS сливает несколько карт kind→ns→counts в одну ns→counts,
+// суммируя total и done по всем kinds.
+func mergeKindsNS(maps map[string]map[string]nsKinds) map[string]nsKinds {
+	byNS := make(map[string]nsKinds)
+	for _, m := range maps {
+		for ns, v := range m {
+			k := byNS[ns]
+			k.total += v.total
+			k.done += v.done
+			byNS[ns] = k
+		}
 	}
 	return byNS
+}
+
+// filterKinds оставляет в карте kind→ns→counts только указанные kinds.
+func filterKinds(byKind map[string]map[string]nsKinds, kinds ...string) map[string]map[string]nsKinds {
+	out := make(map[string]map[string]nsKinds, len(kinds))
+	for _, k := range kinds {
+		if m, ok := byKind[k]; ok {
+			out[k] = m
+		}
+	}
+	return out
+}
+
+// countKubectlKindsNS считает количество объектов всех указанных типов по
+// namespace одного кластера одним вызовом kubectl. Ключ — namespace ("cluster"
+// для Cluster-scoped ресурсов). done — число успешно завершённых Job.
+// Пустая карта при ошибке/нет прав.
+func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
+	return mergeKindsNS(countKindsByKindNS(ctx, ks))
 }
 
 // countKubectlKinds — суммарное количество всех указанных типов во всех
@@ -2103,21 +2240,174 @@ func openKubectlLogStream(sel Selection, since string, sinceTime string, follow 
 
 var tmpl = template.Must(template.ParseFiles(tmplFile))
 
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	data := gatherData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "frontend", data); err != nil {
-		log.Printf("template render: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+// flight — один выполняющийся (или выполненный) запрос к fetchAllFn.
+type flight struct {
+	done      chan struct{}
+	data      *PageData
+	htmlBytes []byte
+	jsonBytes []byte
+}
+
+// dataCache — потокобезопасный кеш агрегированных данных с single-flight:
+// параллельные вызовы get() не запускают второй сбор данных, а ждут первый.
+// Помимо самих данных кешируются отрендеренные HTML и JSON (обновляются
+// только при cache miss), чтобы интервал автообновления не пересылал
+// клиенту одну и ту же разметку.
+type dataCache struct {
+	now func() time.Time // часы для тестов
+	ttl time.Duration
+	mu  sync.Mutex
+	// последний успешный снимок
+	data      *PageData
+	htmlBytes []byte
+	jsonBytes []byte
+	stamp     time.Time
+	// текущий выполняющийся запрос (single-flight)
+	inFlight *flight
+}
+
+// get возвращает данные из кеша, если они свежие относительно ttl; иначе —
+// запускает fetch и кеширует результат. При ttl <= 0 кеш отключён (запрос
+// каждый раз выполняется заново), но single-flight для одновременных вызовов
+// сохраняется.
+func (c *dataCache) get(fetch func() *PageData) (data *PageData) {
+	data, _, _ = c.view(fetch, nil)
+	return data
+}
+
+// view аналогичен get, но дополнительно кеширует отрендеренные html/json байты.
+// render вызывается только при cache miss (или ttl<=0) и хранится до следующего
+// обновления данных; при render==nil кешируются только сами данные.
+func (c *dataCache) view(fetch func() *PageData, render func(*PageData) ([]byte, []byte)) (data *PageData, htmlBytes, jsonBytes []byte) {
+	c.mu.Lock()
+	if c.ttl > 0 && c.data != nil && c.now().Sub(c.stamp) < c.ttl {
+		// данные могли прийти из get() без отрисовки — тогда байтов нет.
+		stale := render != nil && c.htmlBytes == nil
+		if !stale {
+			data = c.data
+			htmlBytes = c.htmlBytes
+			jsonBytes = c.jsonBytes
+			c.mu.Unlock()
+			return data, htmlBytes, jsonBytes
+		}
+		data = c.data
+		c.mu.Unlock()
+		htmlBytes, jsonBytes = render(data)
+		c.mu.Lock()
+		c.htmlBytes, c.jsonBytes = htmlBytes, jsonBytes
+		c.mu.Unlock()
+		return data, htmlBytes, jsonBytes
 	}
+	if f := c.inFlight; f != nil {
+		c.mu.Unlock()
+		<-f.done
+		return f.data, f.htmlBytes, f.jsonBytes
+	}
+	f := &flight{done: make(chan struct{})}
+	c.inFlight = f
+	c.mu.Unlock()
+
+	// Паника в fetch/render не должна вешать single-flight: закрываем done
+	// и сбрасываем inFlight, иначе все последующие запросы навсегда
+	// заблокируются на <-f.done.
+	defer func() {
+		if r := recover(); r != nil {
+			data = &PageData{Error: fmt.Sprintf("internal error while gathering data: %v", r)}
+			f.data = data
+			c.mu.Lock()
+			if c.inFlight == f {
+				close(f.done)
+				c.inFlight = nil
+			}
+			c.mu.Unlock()
+		}
+	}()
+
+	data = fetch()
+	if render != nil {
+		htmlBytes, jsonBytes = render(data)
+	}
+
+	c.mu.Lock()
+	f.data = data
+	f.htmlBytes = htmlBytes
+	f.jsonBytes = jsonBytes
+	close(f.done)
+	c.inFlight = nil
+	if c.ttl > 0 {
+		c.data = data
+		c.htmlBytes = htmlBytes
+		c.jsonBytes = jsonBytes
+		c.stamp = c.now()
+	}
+	c.mu.Unlock()
+	return data, htmlBytes, jsonBytes
+}
+
+// flushDataCache сбрасывает кеш агрегированных данных.
+func flushDataCache() {
+	cacheMu.Lock()
+	overviewCache = newDataCache(dataTTL)
+	cacheMu.Unlock()
+}
+
+// overviewCache — глобальный кеш /api/pods и главной страницы.
+var (
+	overviewCache = newDataCache(dataTTL)
+	cacheMu       sync.Mutex
+)
+
+func newDataCache(ttl time.Duration) *dataCache {
+	return &dataCache{now: time.Now, ttl: ttl}
+}
+
+// renderCacheView кеширует отрендеренные html+json байты рядом с данными;
+// fetch выполняется только при cache miss, рендер — один раз на снимок.
+func renderCacheView(fetch func() *PageData, render func(*PageData) ([]byte, []byte)) (html, json []byte) {
+	cacheMu.Lock()
+	c := overviewCache
+	cacheMu.Unlock()
+	_, html, json = c.view(fetch, render)
+	return html, json
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	html, _ := renderCacheView(func() *PageData {
+		data := gatherData()
+		return &data
+	}, renderPage)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if len(html) == 0 {
+		// renderPage не вернул байтов — вряд ли, но не отдаём пустую страницу.
+		http.Error(w, "template render produced no output", http.StatusInternalServerError)
+		return
+	}
+	w.Write(html)
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
-	data := gatherData()
+	_, json := renderCacheView(func() *PageData {
+		data := gatherData()
+		return &data
+	}, renderPage)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("json encode: %v", err)
+	w.Write(json)
+}
+
+// renderPage рендерит HTML-страницу и JSON-представление PageData.
+// Оба результата кешируются как байты до обновления данных.
+func renderPage(data *PageData) (html, jsonBuf []byte) {
+	var b bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&b, "frontend", data); err != nil {
+		log.Printf("template render: %v", err)
+		return nil, nil
 	}
+	var jb bytes.Buffer
+	if err := json.NewEncoder(&jb).Encode(data); err != nil {
+		log.Printf("json encode: %v", err)
+		return nil, nil
+	}
+	return b.Bytes(), jb.Bytes()
 }
 
 func gatherData() PageData {
@@ -3203,6 +3493,12 @@ func main() {
 	mux.HandleFunc("/api/overview", handleOverview)
 	mux.HandleFunc("/logs", handleLogs)
 
-	log.Printf("KubeLogs: http://localhost%s", listenAddr)
-	log.Fatal(http.ListenAndServe(listenAddr, mux))
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second, // защита от медленного заголовка (slowloris)
+	}
+	// WriteTimeout сознательно не задаём: долгоживущее SSE-соединение /logs.
+	log.Printf("CrossBoard: http://localhost%s", listenAddr)
+	log.Fatal(srv.ListenAndServe())
 }

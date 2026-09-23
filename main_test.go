@@ -1,18 +1,30 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	// Кеш агрегированных данных в тестах выключен: каждый тест собирает
+	// данные заново через подменённые fetchAllFn/getContextsFn.
+	dataTTL = 0
+	overviewCache = newDataCache(0)
+	os.Exit(m.Run())
+}
 
 const samplePodJSON = `{
   "items": [
@@ -524,6 +536,90 @@ func TestServicesByContext(t *testing.T) {
 	}
 }
 
+func TestNetworksAndServicesBatched(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	var calls []string
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		if strings.Contains(joined, "api-resources") {
+			return []byte(""), nil // egress CRD отсутствует
+		}
+		if strings.Contains(joined, " get services,ingresses,networkpolicies,endpoints,endpointslices") {
+			return []byte(`{"items":[
+				{"kind":"ServiceList","items":[
+					{"metadata":{"name":"svc1","namespace":"ns1"}},
+					{"metadata":{"name":"svc2","namespace":"ns2"}}
+				]},
+				{"kind":"IngressList","items":[{"metadata":{"name":"ing1","namespace":"ns1"}}]},
+				{"kind":"NetworkPolicyList","items":[{"metadata":{"name":"np1","namespace":"ns2"}}]}
+			]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected call: %s", joined)
+	}
+
+	netByNS, svcByNS := networksAndServicesByContextNS("c1")
+	if svcByNS["ns1"] != 1 || svcByNS["ns2"] != 1 {
+		t.Errorf("svcByNS = %v, want ns1:1, ns2:1", svcByNS)
+	}
+	if netByNS["ns1"] != 1 || netByNS["ns2"] != 1 {
+		t.Errorf("netByNS = %v, want ns1:1, ns2:1 (без service)", netByNS)
+	}
+	if len(svcByNS) != 2 || len(netByNS) != 2 {
+		t.Errorf("размеры карт: svc=%d net=%d, want 2/2", len(svcByNS), len(netByNS))
+	}
+	// ровно один get на все сетевые типы + один api-resources
+	getCalls := 0
+	for _, c := range calls {
+		if strings.Contains(c, " get services,ingresses,networkpolicies,endpoints,endpointslices") {
+			getCalls++
+		}
+	}
+	if getCalls != 1 {
+		t.Errorf("ожидали один объединённый get, получили %d: %v", getCalls, calls)
+	}
+}
+
+func TestJobsConfigsBatched(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	var calls []string
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		calls = append(calls, joined)
+		return []byte(`{"items":[
+			{"kind":"JobList","items":[
+				{"metadata":{"name":"j1","namespace":"ns1"},"status":{"succeeded":1,"failed":0}},
+				{"metadata":{"name":"j2","namespace":"ns1"},"status":{"succeeded":0,"failed":0}}
+			]},
+			{"kind":"CronJobList","items":[{"metadata":{"name":"cj1","namespace":"ns2"}}]},
+			{"kind":"ConfigMapList","items":[{"metadata":{"name":"cm1","namespace":"ns1"}}]},
+			{"kind":"SecretList","items":[{"metadata":{"name":"s1","namespace":"ns2"}},{"metadata":{"name":"s2","namespace":"ns2"}}]}
+		]}`), nil
+	}
+
+	byKind := countKindsByKindNS("c1", append(scopeKinds("jobs"), scopeKinds("configs")...))
+	jobNS := mergeKindsNS(filterKinds(byKind, "job", "cronjob"))
+	cfgNS := mergeKindsNS(filterKinds(byKind, "configmap", "secret"))
+
+	if jobNS["ns1"].total != 2 || jobNS["ns1"].done != 1 {
+		t.Errorf("jobNS ns1 = %+v, want total 2 done 1", jobNS["ns1"])
+	}
+	if jobNS["ns2"].total != 1 || jobNS["ns2"].done != 0 {
+		t.Errorf("jobNS ns2 = %+v, want total 1 done 0", jobNS["ns2"])
+	}
+	if cfgNS["ns1"].total != 1 || cfgNS["ns2"].total != 2 {
+		t.Errorf("cfgNS = %+v, want ns1:1 ns2:2", cfgNS)
+	}
+	// один get на jobs,cronjobs,configmaps,secrets
+	if len(calls) != 1 || !strings.Contains(calls[0], " get jobs,cronjobs,configmaps,secrets -A") {
+		t.Errorf("ожидали один батч-вызов, получили: %v", calls)
+	}
+}
+
 func TestParseSelection(t *testing.T) {
 	sel, ok := parseSelection("ctx|ns|pod|container")
 	if !ok || sel.Context != "ctx" || sel.Namespace != "ns" || sel.Pod != "pod" || sel.Container != "container" {
@@ -909,7 +1005,7 @@ func TestIndexHandlerRendersPage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"KubeLogs",
+		"CrossBoard",
 		"web-0",
 		"db-0",
 		"k8s-prod",
@@ -1912,5 +2008,509 @@ func TestGatherDataGeneratedTime(t *testing.T) {
 	after := time.Now().Add(time.Minute)
 	if data.Generated.Before(before) || data.Generated.After(after) {
 		t.Errorf("Generated вне диапазона: %v", data.Generated)
+	}
+}
+
+// --- кеш агрегированных данных ---
+
+func TestDataCacheTTL(t *testing.T) {
+	calls := 0
+	c := newDataCache(2 * time.Second)
+	c.now = func() time.Time { return time.Unix(1000, 0) }
+	d := c.get(func() *PageData {
+		calls++
+		return &PageData{Count: 1}
+	})
+	if d.Count != 1 || calls != 1 {
+		t.Fatalf("первый вызов: calls=%d count=%d", calls, d.Count)
+	}
+	d2 := c.get(func() *PageData {
+		calls++
+		return &PageData{Count: 2}
+	})
+	if d2 != d || calls != 1 {
+		t.Fatalf("свежий кеш: calls=%d, ожидали повторное использование", calls)
+	}
+}
+
+func TestDataCacheExpiry(t *testing.T) {
+	calls := 0
+	c := newDataCache(30 * time.Millisecond)
+	c.now = time.Now
+	d := c.get(func() *PageData { calls++; return &PageData{Count: 1} })
+	_ = d
+	time.Sleep(60 * time.Millisecond)
+	_ = c.get(func() *PageData { calls++; return &PageData{Count: 2} })
+	if calls != 2 {
+		t.Fatalf("после истечения TTL fetch вызван %d раз, ожидали 2", calls)
+	}
+}
+
+func TestDataCacheSingleFlight(t *testing.T) {
+	calls := 0
+	c := newDataCache(0) // TTL 0: кеш выключен, но single-flight активен
+	var started sync.WaitGroup
+	started.Add(8)
+	var wg sync.WaitGroup
+	results := make([]*PageData, 8)
+	var mu sync.Mutex
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			started.Done()
+			started.Wait()
+			d := c.get(func() *PageData {
+				calls++
+				time.Sleep(50 * time.Millisecond)
+				return &PageData{Count: 99}
+			})
+			mu.Lock()
+			results[i] = d
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+	if calls != 1 {
+		t.Fatalf("single-flight: fetch вызван %d раз, ожидали 1", calls)
+	}
+	for i := 1; i < len(results); i++ {
+		if results[i] != results[0] {
+			t.Fatalf("goroutine %d получил другой указатель", i)
+		}
+	}
+}
+
+func TestDataCacheBypassZeroTTL(t *testing.T) {
+	calls := 0
+	c := newDataCache(0)
+	d := c.get(func() *PageData { calls++; return &PageData{Count: 1} })
+	_ = d
+	d2 := c.get(func() *PageData { calls++; return &PageData{Count: 2} })
+	if calls != 2 {
+		t.Fatalf("при TTL=0 fetch вызван %d раз, ожидали 2", calls)
+	}
+	if d2.Count != 2 {
+		t.Fatalf("при TTL=0 данные должны быть свежими: %d", d2.Count)
+	}
+}
+
+func TestFlushDataCache(t *testing.T) {
+	oldTTL := dataTTL
+	dataTTL = time.Hour
+	defer func() { dataTTL = oldTTL }()
+	flushDataCache()
+	c := overviewCache
+	_ = c.get(func() *PageData { return &PageData{Count: 1} })
+	flushDataCache()
+	if overviewCache == c {
+		t.Fatal("flushDataCache не заменил экземпляр кеша")
+	}
+}
+
+// --- env-хелперы ---
+
+func TestEnvHelpers(t *testing.T) {
+	old := getenv
+	defer func() { getenv = old }()
+	getenv = func(k string) string {
+		switch k {
+		case "PORT":
+			return "  9001  "
+		case "CACHE":
+			return "42"
+		case "EMPTY":
+			return "   "
+		case "BAD":
+			return "abc"
+		}
+		return ""
+	}
+	if got := envOr("PORT", ":8866"); got != "9001" {
+		t.Errorf("envOr(PORT) = %q, ожидали 9001", got)
+	}
+	if got := envOr("EMPTY", "def"); got != "def" {
+		t.Errorf("envOr(EMPTY) = %q, ожидали def", got)
+	}
+	if got := envDurationSeconds("CACHE", 15*time.Second); got != 42*time.Second {
+		t.Errorf("envDurationSeconds(CACHE) = %v, ожидали 42s", got)
+	}
+	if got := envDurationSeconds("BAD", 15*time.Second); got != 15*time.Second {
+		t.Errorf("envDurationSeconds(BAD) = %v, ожидали дефолт", got)
+	}
+	// CACHE=0 — кеш отключён (dataTTL=0), а не игнор значения (фикс 2).
+	if got := envDurationSeconds("CACHE", 15*time.Second); got == 15*time.Second {
+		t.Errorf("envDurationSeconds не вернул 0 (кеш отключён)")
+	}
+	getenv = func(k string) string { return "0" }
+	if got := envDurationSeconds("CACHE", 15*time.Second); got != 0 {
+		t.Errorf("envDurationSeconds(CACHE=0) = %v, ожидали 0", got)
+	}
+	 // TestMain выставляет dataTTL = 0 до прогона тестов
+	if dataTTL != 0 {
+		t.Errorf("dataTTL = %v в тестах, ожидали 0", dataTTL)
+	}
+}
+
+func TestDataCachePendingOK(t *testing.T) {
+	// Паника в fetch не должна вешать single-flight (фикс 3).
+	c := newDataCache(30 * time.Second)
+	entered := make(chan struct{})
+	var leaderDone sync.WaitGroup
+	leaderDone.Add(1)
+	go func() {
+		defer leaderDone.Done()
+		c.get(func() *PageData {
+			close(entered)
+			time.Sleep(30 * time.Millisecond)
+			panic("boom")
+		})
+	}()
+	<-entered // лидер вошёл в fetch и вот-вот упадёт
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = c.get(func() *PageData { return &PageData{Count: 7} })
+		}()
+	}
+	done := make(chan struct{})
+	go func() { leaderDone.Wait(); wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("паника в fetch повесила параллельные вызовы (get не завершился)")
+	}
+	// После паники кеш не должен оставаться заблокированным.
+	if d := c.get(func() *PageData { return &PageData{Count: 9} }); d.Count != 9 {
+		t.Fatalf("кеш не восстановился после паники: %+v", d)
+	}
+}
+
+func TestDataCacheViewBytes(t *testing.T) {
+	// view() кеширует отрендеренные байты, обновляя их только при cache miss (фикс 6).
+	renders := 0
+	c := newDataCache(0)
+	_, html, json := c.view(func() *PageData {
+		return &PageData{Count: 1}
+	}, func(d *PageData) ([]byte, []byte) {
+		renders++
+		return []byte("<html>"), []byte(`{"count":1}`)
+	})
+	if renders != 1 || string(html) != "<html>" || string(json) != `{"count":1}` {
+		t.Fatalf("первый view: renders=%d html=%s json=%s", renders, html, json)
+	}
+	// TTL=0: каждый вызов рендерит заново.
+	_, html2, _ := c.view(func() *PageData {
+		return &PageData{Count: 2}
+	}, func(d *PageData) ([]byte, []byte) {
+		renders++
+		return []byte("<html2>"), []byte(`{"count":2}`)
+	})
+	if renders != 2 || string(html2) != "<html2>" {
+		t.Fatalf("TTL=0: renders=%d html=%s", renders, html2)
+	}
+}
+
+func TestDataCacheViewCachesBytesOnTTL(t *testing.T) {
+	c := newDataCache(2 * time.Second)
+	c.now = func() time.Time { return time.Unix(1000, 0) }
+	renders := 0
+	fetch := func() *PageData { return &PageData{Count: 1} }
+	render := func(d *PageData) ([]byte, []byte) {
+		renders++
+		return []byte("<html>"), []byte(`{"count":1}`)
+	}
+	_, html, _ := c.view(fetch, render)
+	if renders != 1 {
+		t.Fatalf("первый view renders=%d, ожидали 1", renders)
+	}
+	_, html2, _ := c.view(func() *PageData { return &PageData{Count: 2} }, render)
+	if renders != 1 {
+		t.Fatalf("горячий кеш renders=%d, ожидали повторное использование байтов", renders)
+	}
+	if string(html2) != "<html>" {
+		t.Fatalf("горячий кеш вернул другой html: %s", html2)
+	}
+	_ = html
+}
+
+func TestDataCacheStress(t *testing.T) {
+	// Стресс single-flight при одновременном доступе (замена go test -race).
+	c := newDataCache(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			d := c.get(func() *PageData {
+				time.Sleep(time.Duration(i%5) * time.Millisecond)
+				return &PageData{Count: i}
+			})
+			if d == nil {
+				t.Error("get вернул nil")
+			}
+		}(i)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("dataCache stress: deadlock")
+	}
+}
+
+func TestViewRecoverOnRenderPanic(t *testing.T) {
+	// Паника в render (фикс 3) — параллельные view() должны завершиться.
+	c := newDataCache(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _ = c.view(func() *PageData {
+				return &PageData{Count: 1}
+			}, func(d *PageData) ([]byte, []byte) {
+				panic("render boom")
+			})
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("паника в render повесила view()")
+	}
+	if d := c.get(func() *PageData { return &PageData{Count: 5} }); d.Count != 5 {
+		t.Fatalf("кеш не восстановился после паники render: %+v", d)
+	}
+}
+
+// --- парсеры нагрузки ---
+
+func TestCPUMilli(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"100m", 100, true},
+		{"250m", 250, true},
+		{"1", 1000, true},
+		{"0.5", 500, true},
+		{"2", 2000, true},
+		{"", 0, false},
+		{"abc", 0, false},
+		{"m", 0, false},
+		{"-1", 0, false},
+		{"  300m  ", 300, true},
+	}
+	for _, c := range cases {
+		got, ok := cpuMilli(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("cpuMilli(%q) = %d,%v; ожидали %d,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestMemBytes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"128Mi", 128 << 20, true},
+		{"1Gi", 1 << 30, true},
+		{"512M", 512e6, true},
+		{"2G", 2e9, true},
+		{"1T", 1e12, true},
+		{"1Ti", 1 << 40, true},
+		{"512", 512, true},
+		{"", 0, false},
+		{"abc", 0, false},
+		{"-1Mi", 0, false},
+		{"  64Mi  ", 64 << 20, true},
+	}
+	for _, c := range cases {
+		got, ok := memBytes(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("memBytes(%q) = %d,%v; ожидали %d,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestHelmReleaseYAML(t *testing.T) {
+	// Собираем настоящий helm-секрет: base64(gzip(json)) с информацией о релизе.
+	rel := map[string]interface{}{
+		"name":    "myapp",
+		"version": 1,
+		"info":    map[string]interface{}{"status": "deployed"},
+		"chart":   map[string]interface{}{"metadata": map[string]interface{}{"name": "myapp-chart"}},
+	}
+	payload, _ := json.Marshal(rel)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write(payload)
+	gz.Close()
+	releaseB64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "--context" {
+			if strings.Contains(strings.Join(args, " "), "get secrets") {
+				return []byte(`{"items":[{"metadata":{"name":"sh.helm.release.v1.myapp.v2"}}]}`), nil
+			}
+			if strings.Contains(strings.Join(args, " "), "get secret sh.helm.release.v1.myapp.v2") {
+				sec := fmt.Sprintf(`{"type":"helm.sh/release.v1","data":{"release":%q}}`, releaseB64)
+				return []byte(sec), nil
+			}
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+
+	out, err := helmReleaseYAML("ctx", "ns", "myapp")
+	if err != nil {
+		t.Fatalf("helmReleaseYAML: %v", err)
+	}
+	if !strings.Contains(out, "myapp") || !strings.Contains(out, "deployed") {
+		t.Errorf("вывод не содержит данных релиза: %s", out)
+	}
+
+	// Ревизия v2 выбрана, а не v1.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "get secrets") {
+			return []byte(`{"items":[{"metadata":{"name":"sh.helm.release.v1.myapp.v1"}},{"metadata":{"name":"sh.helm.release.v1.myapp.v2"}}]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); !strings.Contains(err.Error(), "v2") {
+		t.Errorf("не выбрана свежая ревизия: %v", err)
+	}
+}
+
+// --- restartFollowStream: give-up и отсутствие утечки капитала ---
+
+// failStreamSource всегда возвращает ошибку открытия потока.
+func TestRestartFollowStreamGivesUp(t *testing.T) {
+	calls := 0
+	src := func(sel Selection, since, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+		calls++
+		return nil, fmt.Errorf("boom %d", calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", true, 0, src)
+
+	// Ожидается ровно 2 события ошибки: "will retry" и финальный give-up,
+	// затем канал закрывается.
+	var events []LogStreamEvent
+	timeout := time.NewTimer(followMaxErrors*followRetryDelay + 3*time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				goto done
+			}
+			events = append(events, ev)
+			if ev.Err == nil {
+				t.Fatalf("неожиданное событие без ошибки: %+v", ev)
+			}
+		case <-timeout.C:
+			t.Fatalf("restartFollowStream не завершился: событий=%d", len(events))
+		}
+	}
+done:
+	if len(events) != 2 {
+		t.Fatalf("событий ошибок %d, ожидали 2 (will retry + give-up)", len(events))
+	}
+	if !strings.Contains(events[0].Err.Error(), "will retry") {
+		t.Errorf("первое событие не содержит will retry: %v", events[0].Err)
+	}
+	if !strings.Contains(events[1].Err.Error(), "giving up") {
+		t.Errorf("финальное событие не содержит give-up: %v", events[1].Err)
+	}
+	if calls != followMaxErrors {
+		t.Errorf("источник вызван %d раз, ожидали %d (give-up)", calls, followMaxErrors)
+	}
+}
+
+// Блокирующий reader, который разблокируется при Close (как procReader):
+// restartFollowStream держит его открытым, пока не отменён контекст.
+type interruptibleReader struct {
+	closed chan struct{}
+}
+
+func newInterruptibleReader() *interruptibleReader {
+	return &interruptibleReader{closed: make(chan struct{})}
+}
+
+func (r *interruptibleReader) Read(p []byte) (int, error) {
+	<-r.closed
+	return 0, io.EOF
+}
+
+func (r *interruptibleReader) Close() error {
+	select {
+	case <-r.closed:
+	default:
+		close(r.closed)
+	}
+	return nil
+}
+
+func TestRestartFollowStreamCancelsCleanly(t *testing.T) {
+	var mu sync.Mutex
+	var opened int
+	var readers []*interruptibleReader
+	src := sourceFunc(func(sel Selection, since, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+		mu.Lock()
+		opened++
+		r := newInterruptibleReader()
+		readers = append(readers, r)
+		mu.Unlock()
+		return r, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", true, 10, src)
+
+	// Источник открыт и ждёт данные (блокирующее чтение).
+	select {
+	case ev, ok := <-ch:
+		if ok {
+			t.Fatalf("не ожидали события от пустого стрима: %+v", ev)
+		}
+	case <-time.After(200 * time.Millisecond):
+		// Ок: поток открыт.
+	}
+	mu.Lock()
+	got := opened
+	mu.Unlock()
+	if got < 1 {
+		t.Fatalf("источник не открылся (opened=%d)", got)
+	}
+
+	cancel()
+
+	// После отмены контекста все reader'ы закрываются (совместимо со streamClose),
+	// канал обязан закрыться — значит, goroutine не утекают.
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("канал должен закрыться после отмены контекста")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("канал не закрылся после отмены (утечка goroutine)")
+	}
+	for _, r := range readers {
+		r.Close() // идиоматично для defer-закрытия: close(done)
 	}
 }

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>KubeLogs - live logs from all clusters</title>
+    <title>CrossBoard</title>
     <style>
       :root {
         --bg: #0a0f1e;
@@ -85,7 +85,10 @@
         background: linear-gradient(135deg, var(--accent), var(--violet));
         display: grid;
         place-items: center;
-        font-weight: 800;
+        font-size: 21px;
+        font-weight: 900;
+        letter-spacing: -0.5px;
+        line-height: 1;
         color: #08111f;
       }
       header h1 {
@@ -1246,8 +1249,8 @@
   </head>
   <body>
     <header>
-      <div class="logo">KL</div>
-      <h1>KubeLogs</h1>
+      <div class="logo">CB</div>
+      <h1>CrossBoard</h1>
       <span class="updated" id="updated"
         >{{.Generated.Format "2006-01-02 15:04:05"}}</span
       >
@@ -1256,9 +1259,8 @@
           Update
         </button>
         <select id="autoInt" title="Refresh interval">
-          <option value="5">5s</option>
           <option value="10" selected>10s</option>
-          <option value="15">15s</option>
+          <option value="20">20s</option>
           <option value="30">30s</option>
           <option value="60">60s</option>
         </select>
@@ -1799,7 +1801,7 @@
       // (INIT_NS или свежий /api/pods), ограниченной выбранным узлом/кластером/namespace.
       // Знаменатели allocatable берут из сводки (INIT_STATS или свежий /api/pods).
       function recalcCards() {
-        var src = (window.__kubelogsData && window.__kubelogsData.stats) || INIT_STATS;
+        var src = (window.__crossboardData && window.__crossboardData.stats) || INIT_STATS;
         var ctxSet = {}, nsSet = {}, podSet = {}, podRunning = 0, cont = 0, contRunning = 0;
         var cpuUse = 0, memUse = 0;
         rows.forEach(function (tr) {
@@ -1832,7 +1834,7 @@
         // привязаны к выбранному кластеру: при фильтре по кластеру/ноде/namespace
         // суммируются только подходящие пары (ctx, ns), при «все кластера» —
         // все записи NS (это и есть серверные итоги).
-        var nsData = (window.__kubelogsData && window.__kubelogsData.ns) || INIT_NS;
+        var nsData = (window.__crossboardData && window.__crossboardData.ns) || INIT_NS;
         var keys = {};
         if (fNode.value) {
           // Узел: namespace берём из видимых строк отфильтрованной таблицы.
@@ -2269,7 +2271,7 @@
       function renderAll(d) {
         var checked = {};
         tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
-        window.__kubelogsData = d;
+        window.__crossboardData = d;
         var cards = d.cards || [];
         renderCards($("#cards"), cards.slice(0, 10));
         renderCards($("#cards2"), cards.slice(10));
@@ -2358,12 +2360,15 @@
 
       function closeStream() {
         if (ES) { ES.close(); ES = null; }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
       }
 
       var streamRetries = 0;
       var lastKey = null;
       var settling = false;
       var settleTimer = null;
+      var restartTimer = null;
+      var MAX_LOG_LINES = 5000;
       function followOn() { return followChk.classList.contains("on"); }
       function autoScrollOn() { return autoScroll.classList.contains("on"); }
       function settleStart() {
@@ -2373,7 +2378,11 @@
       }
 
       function startStream() {
+        // Модалка закрыта (или scheduled-рестарт сработал после закрытия) —
+        // не открываем фантомный SSE-поток.
+        if (modal.classList.contains("hidden")) { closeStream(); return; }
         closeStream();
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
         var ids = selectedIDs();
         updateSelInfo();
         if (ids.length === 0) { setConn("Nothing selected", "off"); return; }
@@ -2403,7 +2412,7 @@
             setConn("Stream ended, restarting...", "wait");
             // Без сброса вывода: сервер сам переоткрывает kubectl и возобновляет
             // по --since-time, а этот клиентский перезапуск — лишь запасной путь.
-            setTimeout(startStream, 1500);
+            restartTimer = setTimeout(startStream, 1500);
           } else if (!followOn()) {
             setConn("History loaded", "done");
           } else {
@@ -2625,6 +2634,19 @@
         if (key === lastKey) return;
         lastKey = key;
 
+        // Ограничение DOM: live-лог не должен расти бесконечно при долгом
+        // follow-стриме. Удаляем самые старые строки сверху.
+        if (logBody.childElementCount >= MAX_LOG_LINES) {
+          var overflow = logBody.childElementCount - MAX_LOG_LINES + 1;
+          for (var i = 0; i < overflow; i++) {
+            var first = logBody.firstElementChild;
+            if (!first) break;
+            if (first.classList.contains("logline")) totalLines--;
+            if (first.dataset && first.dataset.match === "1") shownLines--;
+            logBody.removeChild(first);
+          }
+        }
+
         var el = document.createElement("div");
         el.className = "logline" + (isErr ? " logerr" : "");
         el.dataset.raw = d.message || d.error || "";
@@ -2800,7 +2822,7 @@
         var a = document.createElement("a");
         var f = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
         a.href = URL.createObjectURL(blob);
-        a.download = "kubelogs-" + f + ".log";
+        a.download = "crossboard-" + f + ".log";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -2809,6 +2831,7 @@
 
       function closeModal() {
         closeStream();
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
         modal.classList.add("hidden");
         clearLog();
       }
@@ -3107,7 +3130,7 @@
 
       // Список подов собирается из уже загруженных данных страницы (без kubectl).
       function cardItemsFromData() {
-        var rows = (window.__kubelogsData && window.__kubelogsData.pods) || [];
+        var rows = (window.__crossboardData && window.__crossboardData.pods) || [];
         var map = {}, order = [];
         rows.forEach(function (p) {
           var key = p.context + "|" + p.namespace + "|" + p.name;
@@ -3124,7 +3147,7 @@
       // Список манифестов (под → контейнер), в которых прописаны CPU/Memory hard limits.
       // Считается из уже загруженных данных страницы: суммирует лимиты контейнеров пода.
       function limitsItemsFromData() {
-        var rows = (window.__kubelogsData && window.__kubelogsData.pods) || [];
+        var rows = (window.__crossboardData && window.__crossboardData.pods) || [];
         var map = {}, order = [];
         rows.forEach(function (p) {
           var cpu = parseCpuMilli(p.cpulim);
@@ -3162,7 +3185,7 @@
             fetch("/api/pods")
               .then(function (r) { return r.json(); })
               .then(function (d) {
-                window.__kubelogsData = d;
+                window.__crossboardData = d;
                 enterSpec(cardItemsFromData(), "No pod data loaded yet. Refresh the page.", "pod");
               })
               .catch(function (err) {
@@ -3182,7 +3205,7 @@
             fetch("/api/pods")
               .then(function (r) { return r.json(); })
               .then(function (d) {
-                window.__kubelogsData = d;
+                window.__crossboardData = d;
                 enterSpec(limitsItemsFromData(), "No pods with CPU/memory hard limits. Refresh the page.", "pod");
               })
               .catch(function (err) {
