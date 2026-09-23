@@ -2115,9 +2115,9 @@ func TestEnvHelpers(t *testing.T) {
 	defer func() { getenv = old }()
 	getenv = func(k string) string {
 		switch k {
-		case "PORT":
+		case "CB_PORT":
 			return "  9001  "
-		case "CACHE":
+		case "CB_DATA_CACHE":
 			return "42"
 		case "EMPTY":
 			return "   "
@@ -2126,25 +2126,25 @@ func TestEnvHelpers(t *testing.T) {
 		}
 		return ""
 	}
-	if got := envOr("PORT", ":8866"); got != "9001" {
-		t.Errorf("envOr(PORT) = %q, ожидали 9001", got)
+	if got := envOr("CB_PORT", ":8866"); got != "9001" {
+		t.Errorf("envOr(CB_PORT) = %q, ожидали 9001", got)
 	}
 	if got := envOr("EMPTY", "def"); got != "def" {
 		t.Errorf("envOr(EMPTY) = %q, ожидали def", got)
 	}
-	if got := envDurationSeconds("CACHE", 15*time.Second); got != 42*time.Second {
-		t.Errorf("envDurationSeconds(CACHE) = %v, ожидали 42s", got)
+	if got := envDurationSeconds("CB_DATA_CACHE", 15*time.Second); got != 42*time.Second {
+		t.Errorf("envDurationSeconds(CB_DATA_CACHE) = %v, ожидали 42s", got)
 	}
 	if got := envDurationSeconds("BAD", 15*time.Second); got != 15*time.Second {
 		t.Errorf("envDurationSeconds(BAD) = %v, ожидали дефолт", got)
 	}
-	// CACHE=0 — кеш отключён (dataTTL=0), а не игнор значения (фикс 2).
-	if got := envDurationSeconds("CACHE", 15*time.Second); got == 15*time.Second {
+	// CB_DATA_CACHE=30 — кеш отключён (dataTTL=0), а не игнор значения (фикс 2).
+	if got := envDurationSeconds("CB_DATA_CACHE", 15*time.Second); got == 15*time.Second {
 		t.Errorf("envDurationSeconds не вернул 0 (кеш отключён)")
 	}
 	getenv = func(k string) string { return "0" }
-	if got := envDurationSeconds("CACHE", 15*time.Second); got != 0 {
-		t.Errorf("envDurationSeconds(CACHE=0) = %v, ожидали 0", got)
+	if got := envDurationSeconds("CB_DATA_CACHE", 15*time.Second); got != 0 {
+		t.Errorf("envDurationSeconds(CB_DATA_CACHE=0) = %v, ожидали 0", got)
 	}
 	 // TestMain выставляет dataTTL = 0 до прогона тестов
 	if dataTTL != 0 {
@@ -2512,5 +2512,172 @@ func TestRestartFollowStreamCancelsCleanly(t *testing.T) {
 	}
 	for _, r := range readers {
 		r.Close() // идиоматично для defer-закрытия: close(done)
+	}
+}
+
+func TestAuthDisabledByDefault(t *testing.T) {
+	// Без CB_AUTH_USERNAME/CB_AUTH_PASSWORD авторизация выключена — прямые
+	// запросы к индексу и к API работают.
+	old := getenv
+	defer func() {
+		getenv = old
+		authEnabled = false
+		authUser, authPass = "", ""
+		authTTL = defaultAuthTTL
+		authSecret = nil
+	}()
+	getenv = func(k string) string { return "" }
+	authSetup()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex без авторизации: status = %d, want 200", rec.Code)
+	}
+	if authorize(req) != true {
+		t.Error("authorize() без включённой авторизации должен возвращать true")
+	}
+}
+
+func TestAuthLoginFlow(t *testing.T) {
+	old := getenv
+	defer func() {
+		getenv = old
+		// Возвращаем состояние «авторизация выключена», чтобы не задеть другие тесты.
+		authEnabled = false
+		authUser, authPass = "", ""
+		authTTL = defaultAuthTTL
+		authSecret = nil
+	}()
+	getenv = func(k string) string {
+		switch k {
+		case "CB_AUTH_USERNAME":
+			return "admin"
+		case "CB_AUTH_PASSWORD":
+			return "secret123"
+		case "CB_AUTH_CACHE":
+			return "60"
+		}
+		return ""
+	}
+	authSetup()
+	if !authEnabled {
+		t.Fatal("авторизация должна быть включена после authSetup, когда заданы логин/пароль")
+	}
+	if authUser != "admin" || authPass != "secret123" {
+		t.Fatalf("authSetup не прочитал креды: %q/%q", authUser, authPass)
+	}
+	if authTTL != 60*time.Second {
+		t.Errorf("authTTL = %v, want 60s (из CB_AUTH_CACHE)", authTTL)
+	}
+
+	// GET / без сессии — форма логина с шапкой и дизайном страницы.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	authHandler(http.HandlerFunc(handleIndex)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /: status = %d, want 200 (форма логина)", rec.Code)
+	}
+	page := rec.Body.String()
+	for _, want := range []string{"CrossBoard", "Sign in", "username", "password", "CB"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("форма логина не содержит %q", want)
+		}
+	}
+
+	// API без сессии — 401.
+	reqAPI := httptest.NewRequest(http.MethodGet, "/api/pods", nil)
+	recAPI := httptest.NewRecorder()
+	authHandler(http.HandlerFunc(handleAPI)).ServeHTTP(recAPI, reqAPI)
+	if recAPI.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/pods без сессии: status = %d, want 401", recAPI.Code)
+	}
+
+	// Неверные креды — снова форма, 200, без cookie сессии.
+	reqBad := httptest.NewRequest(http.MethodPost, "/login", nil)
+	reqBad.PostForm = url.Values{"username": {"admin"}, "password": {"wrong"}}
+	recBad := httptest.NewRecorder()
+	authHandler(http.HandlerFunc(handleIndex)).ServeHTTP(recBad, reqBad)
+	if recBad.Code != http.StatusOK {
+		t.Fatalf("POST /login с неверными кредами: status = %d, want 200 (форма с ошибкой)", recBad.Code)
+	}
+	if !strings.Contains(recBad.Body.String(), "Неверные") {
+		t.Error("форма после неверного входа должна показывать сообщение об ошибке")
+	}
+
+	// Правильные креды — Set-Cookie и редирект.
+	reqOK := httptest.NewRequest(http.MethodPost, "/login", nil)
+	reqOK.PostForm = url.Values{"username": {"admin"}, "password": {"secret123"}}
+	recOK := httptest.NewRecorder()
+	authHandler(http.HandlerFunc(handleIndex)).ServeHTTP(recOK, reqOK)
+	if recOK.Code != http.StatusFound {
+		t.Fatalf("POST /login с верными кредами: status = %d, want 302", recOK.Code)
+	}
+	cookies := recOK.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("после успешного входа не установлена cookie")
+	}
+	var session *http.Cookie
+	for _, c := range cookies {
+		if c.Name == authCookie {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatalf("cookie %q не найдена (есть %v)", authCookie, cookies)
+	}
+	if !authValid(session.Value) {
+		t.Error("выданный токен сессии не проходит authValid")
+	}
+	if session.MaxAge != 60 {
+		t.Errorf("MaxAge = %d, want 60 (TTL из CB_AUTH_CACHE)", session.MaxAge)
+	}
+
+	// С валидной cookie GET / уже отдаёт дашборд, а не форму.
+	reqDash := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqDash.AddCookie(session)
+	recDash := httptest.NewRecorder()
+	authHandler(http.HandlerFunc(handleIndex)).ServeHTTP(recDash, reqDash)
+	if recDash.Code != http.StatusOK {
+		t.Fatalf("GET / с сессией: status = %d, want 200", recDash.Code)
+	}
+	if strings.Contains(recDash.Body.String(), "Sign in") {
+		t.Error("с валидной сессией не должна показываться форма логина")
+	}
+}
+
+func TestAuthValidToken(t *testing.T) {
+	// authValid должен отклонять поддельные и просроченные токены.
+	old := getenv
+	defer func() { getenv = old; authEnabled = false; authSecret = nil }()
+	getenv = func(k string) string {
+		switch k {
+		case "CB_AUTH_USERNAME":
+			return "admin"
+		case "CB_AUTH_PASSWORD":
+			return "secret123"
+		case "CB_AUTH_CACHE":
+			return "3600"
+		}
+		return ""
+	}
+	authSetup()
+
+	good := authToken("admin", time.Hour)
+	if !authValid(good) {
+		t.Error("корректный токен должен проходить authValid")
+	}
+	if authValid("garbage") {
+		t.Error("мусорный токен не должен проходить authValid")
+	}
+	// Подделка с тем же пользователем другим сроком — подпись не сойдётся.
+	if authValid(good + "x") {
+		t.Error("модифицированный токен не должен проходить authValid")
+	}
+	// Просроченный токен с корректной подписью.
+	expired := authToken("admin", -time.Hour)
+	if authValid(expired) {
+		t.Error("просроченный токен не должен проходить authValid")
 	}
 }

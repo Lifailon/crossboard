@@ -135,6 +135,53 @@
         padding: 7px 8px;
       }
 
+      /* ---------- auth ---------- */
+      .auth-card {
+        max-width: 380px;
+        margin: 60px auto;
+        padding: 32px 28px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        display: grid;
+        gap: 14px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      .auth-card h2 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: 0.3px;
+      }
+      .auth-card form {
+        display: grid;
+        gap: 12px;
+      }
+      .auth-card input {
+        width: 100%;
+        padding: 11px 14px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--bg2);
+        color: var(--text);
+        font-size: 14px;
+        outline: none;
+      }
+      .auth-card input:focus {
+        border-color: var(--accent);
+      }
+      .auth-card button {
+        width: 100%;
+        margin-top: 4px;
+      }
+      .auth-error {
+        color: var(--red);
+        background: rgba(248, 113, 113, 0.1);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+
       /* ---------- banner ---------- */
       .banner {
         margin: 16px 22px 0;
@@ -1251,10 +1298,15 @@
     <header>
       <div class="logo">CB</div>
       <h1>CrossBoard</h1>
+      {{if .AuthRequired}}
+      <span class="updated">Authorization required</span>
+      {{else}}
       <span class="updated" id="updated"
         >{{.Generated.Format "2006-01-02 15:04:05"}}</span
       >
+      {{end}}
       <div class="auto">
+        {{if not .AuthRequired}}
         <button id="autoBtn" title="Toggle automatic table refresh">
           Update
         </button>
@@ -1264,8 +1316,36 @@
           <option value="30">30s</option>
           <option value="60">60s</option>
         </select>
+        {{end}}
       </div>
     </header>
+
+    {{if .AuthRequired}}
+    <section class="auth-card">
+      <h2>Sign in</h2>
+      {{if .AuthError}}
+      <div class="auth-error">{{.AuthError}}</div>
+      {{end}}
+      <form method="post" action="/login" autocomplete="off">
+        <input
+          type="text"
+          name="username"
+          placeholder="Username"
+          autocomplete="username"
+          required
+          autofocus
+        />
+        <input
+          type="password"
+          name="password"
+          placeholder="Password"
+          autocomplete="current-password"
+          required
+        />
+        <button type="submit" class="primary">Log in</button>
+      </form>
+    </section>
+    {{else}}
 
     {{if .Error}}
     <div class="banner">Some clusters are unavailable: {{.Error}}</div>
@@ -3300,16 +3380,37 @@
         evState.kinds = {};
         if (evStat) { evStat.textContent = ""; evStat.className = "count"; }
         evModal.classList.remove("hidden");
+        refreshEvents();
+        // События обновляются в реальном времени, пока модалка открыта.
+        // Фильтры (текст/кластер/тип/виды) сохраняются между обновлениями.
+        evTimer = setInterval(refreshEvents, EV_REFRESH_MS);
+      }
+
+      var evTimer = null;
+      var EV_REFRESH_MS = 5000;
+
+      // refreshEvents перезагружает события с сохранением текущих фильтров.
+      function refreshEvents() {
         fetch("/api/overview?scope=events")
           .then(function (r) { return r.json(); })
           .then(function (d) {
+            var prevCtx = evCtx.value;
             evState.items = d.items || [];
             fillEvCtx();
+            if (prevCtx && evCtx.querySelector('option[value="' + prevCtx + '"]')) {
+              evCtx.value = prevCtx;
+            } else {
+              evCtx.value = "";
+            }
             renderEvKinds();
             renderEvents();
           })
           .catch(function (err) {
-            evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Failed to load events: ' + err + '</td></tr>';
+            // Ошибка сети/401 — оставляем текущие данные и не перезаписываем
+            // содержимое, чтобы не терять фильтры.
+            if (!evState.items.length) {
+              evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Failed to load events: ' + err + '</td></tr>';
+            }
           });
       }
 
@@ -3398,6 +3499,7 @@
       }
 
       function closeEvents() {
+        if (evTimer) { clearInterval(evTimer); evTimer = null; }
         evModal.classList.add("hidden");
         evState.items = [];
         evState.kinds = {};
@@ -3457,6 +3559,7 @@
       })();
     </script>
 
+    {{end}}
     {{end}}
   </body>
 </html>

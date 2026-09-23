@@ -5,7 +5,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -25,9 +30,11 @@ import (
 const (
 	defaultPort = ":8866"
 	// defaultCacheTTL — TTL кеша агрегированных данных по умолчанию (можно
-	// переопределить переменной окружения CACHE, значение в секундах).
+	// переопределить переменной окружения CB_DATA_CACHE, значение в секундах).
 	defaultCacheTTL = 10 * time.Second
 	tmplFile        = "frontend.tmpl"
+	// defaultAuthTTL — время жизни сессии авторизации по умолчанию (CB_AUTH_CACHE).
+	defaultAuthTTL = 1 * time.Hour
 )
 
 // getenv — переопределяемая в тестах обёртка над os.Getenv.
@@ -67,10 +74,19 @@ const (
 var kubectlTimeout = 30 * time.Second
 
 var (
-	// listenAddr — адрес HTTP-сервера, по умолчанию :8866, задаётся через PORT.
-	listenAddr = ":" + envOr("PORT", defaultPort[1:])
+	// listenAddr — адрес HTTP-сервера, по умолчанию :8866, задаётся через CB_PORT.
+	listenAddr = ":" + envOr("CB_PORT", defaultPort[1:])
 	// dataTTL — время жизни кеша агрегированных данных. 0 — кеш отключён.
-	dataTTL = envDurationSeconds("CACHE", defaultCacheTTL)
+	dataTTL = envDurationSeconds("CB_DATA_CACHE", defaultCacheTTL)
+	// authEnabled — авторизация включена только при заданных CB_AUTH_USERNAME
+	// и CB_AUTH_PASSWORD.
+	authEnabled  bool
+	authUser     string
+	authPass     string
+	authSecret   []byte // ключ подписи токена сессии, генерируется при старте
+	authTTL      = envDurationSeconds("CB_AUTH_CACHE", defaultAuthTTL)
+	authCookie   = "cb_session"
+	authLoginURL = "/login"
 )
 
 // ---------------------------------------------------------------------------
@@ -188,6 +204,10 @@ type PageData struct {
 	Count      int               `json:"count"`
 	Generated  time.Time         `json:"generated"`
 	Error      string            `json:"error"`
+	// AuthRequired — требуется показать форму логина вместо дашборда.
+	AuthRequired bool `json:"-"`
+	// AuthError — текст ошибки авторизации (выводится в форме логина).
+	AuthError string `json:"-"`
 }
 
 // Selection — один источник логов для kubectl logs.
@@ -2382,7 +2402,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "template render produced no output", http.StatusInternalServerError)
 		return
 	}
-	w.Write(html)
+	if _, err := w.Write(html); err != nil {
+		log.Printf("index write: %v", err)
+	}
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
@@ -2391,7 +2413,9 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		return &data
 	}, renderPage)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write(json)
+	if _, err := w.Write(json); err != nil {
+		log.Printf("api write: %v", err)
+	}
 }
 
 // renderPage рендерит HTML-страницу и JSON-представление PageData.
@@ -2408,6 +2432,180 @@ func renderPage(data *PageData) (html, jsonBuf []byte) {
 		return nil, nil
 	}
 	return b.Bytes(), jb.Bytes()
+}
+
+// ---------------------------------------------------------------------------
+// Базовая авторизация (собственная, без внешних зависимостей).
+// Работает только если заданы CB_AUTH_USERNAME и CB_AUTH_PASSWORD.
+// Форма логина рендерится с тем же дизайном и шапкой, сессия хранится в cookie
+// CB_AUTH_CACHE (секунды, по умолчанию 1 час).
+// ---------------------------------------------------------------------------
+
+// authSetup инициализирует конфигурацию авторизации из окружения.
+func authSetup() {
+	authUser = envOr("CB_AUTH_USERNAME", "")
+	authPass = envOr("CB_AUTH_PASSWORD", "")
+	authEnabled = authUser != "" && authPass != ""
+	t := envDurationSeconds("CB_AUTH_CACHE", defaultAuthTTL)
+	if t <= 0 {
+		t = defaultAuthTTL // 0 не допускаем: сессия должна жить весь срок
+	}
+	authTTL = t
+	if authEnabled {
+		authSecret = make([]byte, 32)
+		if _, err := rand.Read(authSecret); err != nil {
+			authSecret = []byte(fmt.Sprintf("cb-secret-%d", time.Now().UnixNano()))
+			log.Printf("rand: %v (fallback)", err)
+		}
+	}
+}
+
+// authToken подписывает строку HMAC-SHA256 и возвращает base64url(user|now|exp|sig).
+// Зависимости времени нет: достаточно сверить подпись и срок действия.
+func authToken(u string, ttl time.Duration) string {
+	now := time.Now().Unix()
+	exp := now + int64(ttl.Seconds())
+	payload := fmt.Sprintf("%s|%d|%d", u, now, exp)
+	mac := hmac.New(sha256.New, authSecret)
+	mac.Write([]byte(payload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload+"|"+sig))
+}
+
+// authValid проверяет подпись и срок действия токена сессии.
+func authValid(tok string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(string(b), "|")
+	if len(parts) != 4 {
+		return false
+	}
+	u, nowS, expS, sig := parts[0], parts[1], parts[2], parts[3]
+	if u != authUser {
+		return false
+	}
+	now, err1 := strconv.ParseInt(nowS, 10, 64)
+	exp, err2 := strconv.ParseInt(expS, 10, 64)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if time.Now().Unix() > exp {
+		return false
+	}
+	mac := hmac.New(sha256.New, authSecret)
+	mac.Write([]byte(strings.Join(parts[:3], "|")))
+	want := fmt.Sprintf("%x", mac.Sum(nil))
+	if len(want) != len(sig) || subtle.ConstantTimeCompare([]byte(want), []byte(sig)) != 1 {
+		return false
+	}
+	_ = now
+	return true
+}
+
+// authorize проверяет cookie сессии запроса.
+func authorize(r *http.Request) bool {
+	if !authEnabled {
+		return true
+	}
+	if c, err := r.Cookie(authCookie); err == nil {
+		return authValid(c.Value)
+	}
+	return false
+}
+
+// writeLoginPage рендерит форму логина с сохранением шапки и дизайна.
+// Шаблон переиспользует "frontend", но с AuthRequired=true вместо контента.
+func writeLoginPage(w http.ResponseWriter, errMsg string) {
+	data := PageData{AuthRequired: true, AuthError: errMsg, Generated: time.Now()}
+	var b bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&b, "frontend", &data); err != nil {
+		log.Printf("login template render: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write(b.Bytes()); err != nil {
+		log.Printf("login page write: %v", err)
+	}
+}
+
+// writeJSON сериализует v в w и логирует ошибку записи/кодирования.
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("json encode response: %v", err)
+	}
+}
+
+// handleLogin обрабатывает POST /login: проверяет учётные данные и ставит cookie.
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLoginPage(w, "")
+		return
+	}
+	u := r.PostFormValue("username")
+	p := r.PostFormValue("password")
+	ok := subtle.ConstantTimeCompare([]byte(u), []byte(authUser)) == 1 &&
+		subtle.ConstantTimeCompare([]byte(p), []byte(authPass)) == 1
+	if !ok {
+		writeLoginPage(w, "Неверные имя пользователя или пароль")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookie,
+		Value:    authToken(u, authTTL),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(authTTL.Seconds()),
+	})
+	log.Printf("auth: user %q logged in", u)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleLogout сбрасывает cookie сессии.
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, authLoginURL, http.StatusFound)
+}
+
+// authHandler оборачивает роутер: если авторизация включена, требует сессию
+// для всех маршрутов, кроме /login и /logout.
+func authHandler(next http.Handler) http.Handler {
+	if !authEnabled {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case authLoginURL:
+			if r.Method == http.MethodPost {
+				handleLogin(w, r)
+				return
+			}
+			writeLoginPage(w, "")
+			return
+		case "/logout":
+			handleLogout(w, r)
+			return
+		}
+		if authorize(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// API без авторизации — 401, HTML — форма логина.
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/logs" {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		writeLoginPage(w, "")
+	})
 }
 
 func gatherData() PageData {
@@ -2476,7 +2674,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	sels := parseSelections(r.URL.Query()["sel"])
 	if len(sels) == 0 {
-		fmt.Fprint(w, "event: error\ndata: {\"error\":\"no log sources selected\"}\n\n")
+		if _, err := fmt.Fprint(w, "event: error\ndata: {\"error\":\"no log sources selected\"}\n\n"); err != nil {
+			log.Printf("sse error write: %v", err)
+		}
 		flusher.Flush()
 		return
 	}
@@ -2490,7 +2690,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	fmt.Fprint(w, "retry: 2000\n\n")
+	if _, err := fmt.Fprint(w, "retry: 2000\n\n"); err != nil {
+		log.Printf("sse retry write: %v", err)
+	}
 	flusher.Flush()
 
 	var events <-chan LogStreamEvent
@@ -2524,12 +2726,19 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			b, err := json.Marshal(line)
 			if err != nil {
+				log.Printf("sse marshal: %v", err)
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", b)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				log.Printf("sse data write: %v", err)
+				return
+			}
 			flusher.Flush()
 		case <-ticker.C:
-			fmt.Fprint(w, ": ping\n\n")
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				log.Printf("sse ping write: %v", err)
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
@@ -2537,7 +2746,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 streamDone:
-	fmt.Fprint(w, "event: done\ndata: {}\n\n")
+	if _, err := fmt.Fprint(w, "event: done\ndata: {}\n\n"); err != nil {
+		log.Printf("sse done write: %v", err)
+	}
 	flusher.Flush()
 }
 
@@ -2814,13 +3025,13 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 	resp := relatedResp{}
 	if scope == "" {
 		resp.Error = "missing scope"
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	ctxs, err := getContextsFn()
 	if err != nil {
 		resp.Error = err.Error()
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	if onlyCtx != "" {
@@ -3021,7 +3232,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		resp.Error = "unknown scope"
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	wg.Wait()
@@ -3039,7 +3250,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		return refs[i].Kind < refs[j].Kind
 	})
 	resp.Items = refs
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 type relatedResp struct {
@@ -3300,7 +3511,7 @@ func handleRelated(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		resp.Error = err.Error()
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // kubectlConfig — подмножество kubeconfig для вырезки одной записи контекста.
@@ -3443,7 +3654,7 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 	resp := objectResp{Kind: kind, Name: name}
 	if name == "" {
 		resp.Error = "no object name provided"
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	if kind == "cluster" {
@@ -3453,7 +3664,7 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.Yaml = y
 		}
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	if kind == "chart" {
@@ -3465,7 +3676,7 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.Yaml = y
 		}
-		_ = json.NewEncoder(w).Encode(resp)
+		writeJSON(w, resp)
 		return
 	}
 	args := []string{"--context", ctx, "get", kind, name, "-o", "yaml"}
@@ -3481,11 +3692,21 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.Yaml = string(out)
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 func main() {
+	authSetup()
+
+	if authEnabled {
+		log.Printf("CrossBoard: basic auth enabled (user %q, session TTL %v)", authUser, authTTL)
+	} else {
+		log.Printf("CrossBoard: basic auth disabled (set CB_AUTH_USERNAME/CB_AUTH_PASSWORD to enable)")
+	}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/login", handleLogin)
+	mux.HandleFunc("/logout", handleLogout)
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/api/pods", handleAPI)
 	mux.HandleFunc("/api/related", handleRelated)
@@ -3495,10 +3716,12 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           mux,
+		Handler:           authHandler(mux),
 		ReadHeaderTimeout: 5 * time.Second, // защита от медленного заголовка (slowloris)
 	}
 	// WriteTimeout сознательно не задаём: долгоживущее SSE-соединение /logs.
 	log.Printf("CrossBoard: http://localhost%s", listenAddr)
-	log.Fatal(srv.ListenAndServe())
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("listen: %v", err)
+	}
 }
