@@ -132,7 +132,7 @@ func TestParsePodList(t *testing.T) {
 	}
 
 	initX := pods[1]
-	if initX.Container != "init-x" || initX.State != "Terminated:Completed" || initX.StateCss != "err" {
+	if initX.Container != "init-x" || initX.State != "Terminated:Completed" || initX.StateCss != "ok" {
 		t.Errorf("init-x mismatch: %+v", initX)
 	}
 	if initX.Res != "-/250m · -/-" {
@@ -179,12 +179,12 @@ func TestJoinLabels(t *testing.T) {
 }
 
 func TestResPart(t *testing.T) {
-	// Использование относительно лимита.
-	if got, want := resPart("100m", "500m", "25m", cpuMilli), "25m/500m (5%)"; got != want {
+	// Использование относительно лимита: сначала %, потом use/lim.
+	if got, want := resPart("100m", "500m", "25m", cpuMilli), "5% (25m/500m)"; got != want {
 		t.Errorf("resPart cpu = %q, want %q", got, want)
 	}
 	// Лимита нет — процент от запрошенных ресурсов.
-	if got, want := resPart("200m", "", "50m", cpuMilli), "50m/200m (25%)"; got != want {
+	if got, want := resPart("200m", "", "50m", cpuMilli), "25% (50m/200m)"; got != want {
 		t.Errorf("resPart no-limit = %q, want %q", got, want)
 	}
 	// Без потребления — падает на req/lim.
@@ -192,13 +192,13 @@ func TestResPart(t *testing.T) {
 		t.Errorf("resPart no-usage = %q, want %q", got, want)
 	}
 	// Целые ядра и двоичные/десятичные суффиксы памяти.
-	if got, want := resPart("1", "2", "500m", cpuMilli), "500m/2 (25%)"; got != want {
+	if got, want := resPart("1", "2", "500m", cpuMilli), "25% (500m/2)"; got != want {
 		t.Errorf("resPart cores = %q, want %q", got, want)
 	}
-	if got, want := resPart("128Mi", "512Mi", "64Mi", memBytes), "64Mi/512Mi (13%)"; got != want {
+	if got, want := resPart("128Mi", "512Mi", "64Mi", memBytes), "13% (64Mi/512Mi)"; got != want {
 		t.Errorf("resPart mem = %q, want %q", got, want)
 	}
-	if got, want := resPart("1Gi", "4Gi", "1Gi", memBytes), "1Gi/4Gi (25%)"; got != want {
+	if got, want := resPart("1Gi", "4Gi", "1Gi", memBytes), "25% (1Gi/4Gi)"; got != want {
 		t.Errorf("resPart GiB = %q, want %q", got, want)
 	}
 }
@@ -374,26 +374,28 @@ func TestBuildCards(t *testing.T) {
 		NodeReady:  4, NodeTotal: 5,
 		Pods: 10, PodsRunning: 8,
 		Containers: 20, Running: 15,
+		Networks: 7,
 		Services: 7,
 		Jobs:     4,
 		JobsDone: 3,
 		Configs:  6,
+		Charts:   5,
 		CpuMilli: 1200, CpuTotalMilli: 4000,
 		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
 		CpuLimitMilli: 1200, MemLimitBytes: 2 << 30,
 		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
 	})
-	if len(cards) != 14 {
-		t.Fatalf("len(cards) = %d, want 14", len(cards))
+	if len(cards) != 15 {
+		t.Fatalf("len(cards) = %d, want 15", len(cards))
 	}
-	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Services", "Configs", "Events"}
-	row2 := []string{"CPU", "Memory", "HARD LIMITS", "PVC size", "PV/PVC"}
+	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Charts", "Service", "Configs", "Events"}
+	row2 := []string{"CPU", "Memory", "Limits", "PVC size", "PVC/PV Count"}
 	for i, l := range append(row1, row2...) {
 		if cards[i].Label != l {
 			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
 		}
 	}
-	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "svc", "configs", "events", "", "", "", "pvc", "pvc"}
+	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "charts", "svc", "configs", "events", "", "", "limits", "pvc", "pvc"}
 	for i, s := range scopes {
 		if cards[i].Scope != s {
 			t.Errorf("cards[%d].Scope = %q, want %q (%s)", i, cards[i].Scope, s, cards[i].Label)
@@ -405,26 +407,45 @@ func TestBuildCards(t *testing.T) {
 	if cards[3].Value != "8/10" || cards[4].Value != "15/20" || cards[5].Value != "3/4" {
 		t.Errorf("pods/containers/jobs = %+v", cards[:6])
 	}
-	if cards[6].Value != "7" || cards[7].Value != "6" {
-		t.Errorf("services/configs cards = %+v", cards[6:8])
+	if cards[6].Label != "Charts" || cards[6].Value != "5" {
+		t.Errorf("charts card: %+v", cards[6])
 	}
-	if cards[8].Label != "Events" || cards[8].Value != "0" {
-		t.Errorf("events card: %+v", cards[8])
+	if cards[7].Value != "7" || cards[8].Value != "6" {
+		t.Errorf("networks/configs cards = %+v", cards[7:9])
 	}
-	if cards[9].Value != "1.20 / 4.00" || cards[9].Hint != "cores in use / allocatable" {
-		t.Errorf("cpu card: %+v", cards[9])
+	if cards[9].Label != "Events" || cards[9].Value != "0" {
+		t.Errorf("events card: %+v", cards[9])
 	}
-	if cards[10].Value != "2.00 / 4.00 GiB" {
-		t.Errorf("memory card: %+v", cards[10])
+	if cards[10].Value != "1.20 / 4.00" || cards[10].Scope != "" {
+		t.Errorf("cpu card: %+v", cards[10])
 	}
-	if cards[11].Label != "HARD LIMITS" || cards[11].Value != "1.20 / 2.00 GiB" {
-		t.Errorf("hard limits card: %+v", cards[11])
+	if cards[11].Value != "2.00 / 4.00 GiB" || cards[11].Scope != "" {
+		t.Errorf("memory card: %+v", cards[11])
 	}
-	if cards[12].Value != "1.00 / 2.00 GiB" || cards[12].Label != "PVC size" {
-		t.Errorf("pvc size card: %+v", cards[12])
+	if cards[12].Label != "Limits" || cards[12].Value != "1.20 / 2.00 GiB" || cards[12].Scope != "limits" {
+		t.Errorf("limits card: %+v", cards[12])
 	}
-	if cards[13].Value != "2/5" || cards[13].Label != "PV/PVC" {
-		t.Errorf("pv/pvc card: %+v", cards[13])
+	if cards[13].Value != "1.00 / 2.00 GiB" || cards[13].Label != "PVC size" {
+		t.Errorf("pvc size card: %+v", cards[13])
+	}
+	if cards[14].Value != "2/5" || cards[14].Label != "PVC/PV Count" || cards[14].Scope != "pvc" {
+		t.Errorf("pv/pvc card: %+v", cards[14])
+	}
+}
+
+func TestScopeKindsPVC(t *testing.T) {
+	got := scopeKinds("pvc")
+	if len(got) != 3 {
+		t.Fatalf("scopeKinds(pvc) len = %d, want 3", len(got))
+	}
+	want := map[string]bool{"persistentvolume": true, "persistentvolumeclaim": true, "storageclass": true}
+	for _, k := range got {
+		if !want[k.kind] {
+			t.Errorf("scopeKinds(pvc) unexpected kind %q", k.kind)
+		}
+		if k.cat != "Storage" {
+			t.Errorf("scopeKinds(pvc)[%s] cat = %q, want Storage", k.kind, k.cat)
+		}
 	}
 }
 
@@ -437,6 +458,9 @@ func TestPVPvcValue(t *testing.T) {
 	}
 	if got := pvPvcValue(Stats{}); got != "0" {
 		t.Errorf("pvPvcValue empty = %q, want 0", got)
+	}
+	if got := pvPvcValue(Stats{PVCOk: 1, PVCBound: 2, PVCTotal: 5, StorageClasses: 3}); got != "2/5" {
+		t.Errorf("pvPvcValue + sc = %q, want 2/5 (SC count no longer shown)", got)
 	}
 }
 
@@ -963,8 +987,8 @@ func TestAPIHandlerJSON(t *testing.T) {
 	if data.Stats.Contexts != 1 || data.Stats.AvailCtx != 1 {
 		t.Errorf("stats mismatch: %+v", data.Stats)
 	}
-	if len(data.Cards) != 14 {
-		t.Errorf("len(Cards) = %d, want 14", len(data.Cards))
+	if len(data.Cards) != 15 {
+		t.Errorf("len(Cards) = %d, want 15", len(data.Cards))
 	}
 }
 
@@ -1196,15 +1220,49 @@ func TestNodesContextParsesJSON(t *testing.T) {
 		]}`), nil
 	}
 	defer withFakeKubectl(t, fn)()
-	ready, total, cpu, mem := nodesContext("c1")
+	ready, total, cpu, mem, ok := nodesContext("c1")
 	if ready != 1 || total != 3 {
 		t.Errorf("ready/total = %d/%d, want 1/3", ready, total)
+	}
+	if !ok {
+		t.Errorf("nodesContext ok = false, want true")
 	}
 	if cpu != 3500 { // 2 + 500m + 1
 		t.Errorf("cpu = %d, want 3500", cpu)
 	}
 	if mem != 8127596<<10+1<<30+512<<20 {
 		t.Errorf("mem = %d, want sum of allocatable", mem)
+	}
+}
+
+func TestSCByContextParsesJSON(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Join(args, " ") != "--context c1 get storageclass -o json" {
+			return nil, fmt.Errorf("unexpected: %s", strings.Join(args, " "))
+		}
+		return []byte(`{"items":[
+			{"metadata":{"name":"standard"},"provisioner":"kubernetes.io/aws-ebs"},
+			{"metadata":{"name":"fast"},"provisioner":"kubernetes.io/aws-ebs"},
+			{"metadata":{"name":"ceph"},"provisioner":"rook-ceph.rbd.csi.ceph.com"}
+		]}`), nil
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	if got := scByContext("c1"); got != 3 {
+		t.Errorf("scByContext = %d, want 3", got)
+	}
+}
+
+func TestSCByContextErrorReturnsMinusOne(t *testing.T) {
+	oldRun := runKubectlFn
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("boom")
+	}
+	defer func() { runKubectlFn = oldRun }()
+
+	if got := scByContext("c1"); got != -1 {
+		t.Errorf("scByContext on error = %d, want -1", got)
 	}
 }
 
@@ -1399,9 +1457,17 @@ func TestOverviewScopes(t *testing.T) {
 	getContextsFn = func() ([]string, error) { return []string{"c1", "c2"}, nil }
 	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
 
-	runPVC := `{"items":[
-		{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
-		{"metadata":{"name":"logs","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
+	runVolume := `{"kind":"List","items":[
+		{"kind":"PersistentVolumeClaimList","items":[
+			{"metadata":{"name":"web","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"10Gi"}}}},
+			{"metadata":{"name":"logs","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"},"spec":{"resources":{"requests":{"storage":"5Gi"}}}}
+		]},
+		{"kind":"PersistentVolumeList","items":[
+			{"metadata":{"name":"pv-a","creationTimestamp":"2026-01-03T00:00:00Z"}}
+		]},
+		{"kind":"StorageClassList","items":[
+			{"metadata":{"name":"standard","creationTimestamp":"2026-01-04T00:00:00Z"}}
+		]}
 	]}`
 	runSVC := `{"kind":"List","items":[
 		{"kind":"Service","metadata":{"name":"api","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}},
@@ -1463,8 +1529,8 @@ func TestOverviewScopes(t *testing.T) {
 	runKubectlFn = func(args ...string) ([]byte, error) {
 		j := strings.Join(args, " ")
 		switch {
-		case strings.Contains(j, "get persistentvolumeclaims"):
-			return []byte(runPVC), nil
+		case strings.Contains(j, "get persistentvolumeclaims,persistentvolumes,storageclasses"):
+			return []byte(runVolume), nil
 		case strings.Contains(j, "get services,ingresses,networkpolicies,endpoints,endpointslices"):
 			return []byte(runNet), nil
 		case strings.Contains(j, "get services"):
@@ -1496,15 +1562,18 @@ func TestOverviewScopes(t *testing.T) {
 		return r
 	}
 
-	// pvc: оба контекста, у каждого по 2 PVC → 4 элемента с ёмкостью.
+	// pvc: оба контекста, у каждого по 2 PVC + 1 PV + 1 StorageClass → 4 элемента PVC.
 	r := call("pvc")
-	if len(r.Items) != 4 {
-		t.Fatalf("pvc items = %d, want 4", len(r.Items))
+	if len(r.Items) != 8 {
+		t.Fatalf("pvc items = %d, want 8", len(r.Items))
 	}
 	found := false
 	for _, it := range r.Items {
-		if it.Kind != "persistentvolumeclaim" || it.Ns == "" || it.Ctx == "" || it.Reason != "10.00 GiB" && it.Reason != "5.00 GiB" {
+		if it.Kind == "persistentvolumeclaim" && (it.Ns == "" || it.Ctx == "" || (it.Reason != "10.00 GiB" && it.Reason != "5.00 GiB")) {
 			t.Errorf("pvc item = %+v", it)
+		}
+		if it.Kind != "persistentvolumeclaim" && it.Kind != "persistentvolume" && it.Kind != "storageclass" {
+			t.Errorf("pvc unexpected kind = %+v", it)
 		}
 		if it.Name == "web" && it.Ns == "prod" {
 			found = true

@@ -10,7 +10,7 @@
   --bg:#0a0f1e; --bg2:#0e1628; --panel:#111a30; --panel2:#16213c;
   --line:#22304f; --line2:#2b3c63; --text:#dce5f6; --muted:#8aa0c4; --dim:#5c7197;
   --accent:#38bdf8; --violet:#a78bfa; --blue:#60a5fa; --teal:#2dd4bf;
-  --ok:#34d399; --warn:#fbbf24; --red:#f87171; --amber:#f59e0b;
+  --ok:#34d399; --warn:#fbbf24; --red:#f87171; --amber:#f59e0b; --sky:#7dd3fc;
   --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,'Courier New',monospace;
   --tsw:29ch;
   --sans:system-ui,-apple-system,'Segoe UI',Roboto,'Inter',sans-serif;
@@ -31,18 +31,19 @@ a{color:var(--accent)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:18px 22px;border-bottom:1px solid var(--line);background:rgba(10,15,30,.75);backdrop-filter:blur(10px);position:sticky;top:0;z-index:40}
 .logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--violet));display:grid;place-items:center;font-weight:800;color:#08111f}
 header h1{font-size:20px;margin:0;letter-spacing:.3px}
-.updated{margin-left:auto;color:var(--dim);font-size:12px;white-space:nowrap}
+.updated{margin-left:auto;color:var(--text);font-size:12px;white-space:nowrap;font-family:var(--mono);border-radius:999px;padding:5px 14px;border:1px solid var(--line);background:var(--bg2)}
 .auto{display:flex;gap:8px;align-items:center}
 .auto button{white-space:nowrap;font-size:12px;padding:7px 12px}
 .auto button.on{background:var(--ok);border-color:var(--ok);color:#08111f;font-weight:600}
 .auto button.on:hover{filter:brightness(1.12)}
+.auto button:not(.on):hover{border-color:var(--ok);background:rgba(52,211,153,.15)}
 .auto select{max-width:110px;padding:7px 8px}
 
 /* ---------- banner ---------- */
 .banner{margin:16px 22px 0;padding:10px 14px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca;border-radius:10px;font-size:13px;white-space:pre-wrap;word-break:break-word}
 
 /* ---------- cards ---------- */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 22px 6px;max-width:1600px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:12px;padding:16px 22px 6px;max-width:1600px;margin:0 auto}
 .cards.row2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));padding:6px 22px 16px}
 .card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:12px 14px 11px;overflow:hidden}
 .card[data-scope]{cursor:pointer;transition:transform .12s ease,border-color .12s ease}
@@ -52,7 +53,7 @@ header h1{font-size:20px;margin:0;letter-spacing:.3px}
 .card .value{font-size:28px;font-weight:700;line-height:1.15;color:var(--cc);font-family:var(--mono)}
 .card.accent{--cc:var(--accent)} .card.violet{--cc:var(--violet)} .card.blue{--cc:var(--blue)}
 .card.teal{--cc:var(--teal)} .card.ok{--cc:var(--ok)} .card.red{--cc:var(--red)}
-.card.amber{--cc:var(--amber)} .card.redSoft{--cc:var(--red)}
+.card.amber{--cc:var(--amber)} .card.redSoft{--cc:var(--red)} .card.sky{--cc:var(--sky)}
 
 /* ---------- toolbar ---------- */
 .toolbar{max-width:1600px;margin:6px auto 0;padding:0 22px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -82,6 +83,7 @@ thead th.sorted.asc::after{content:"\25B2";opacity:1}
 thead th.sorted.desc::after{content:"\25BC";opacity:1}
 tbody td{padding:8px 10px;border-bottom:1px solid rgba(34,48,79,.55);vertical-align:middle}
 tbody tr:hover{background:rgba(56,189,248,.045);cursor:pointer}
+tbody tr.row-on td{background:rgba(56,189,248,.10)}
 tfoot td{position:sticky;bottom:0;z-index:9;background:#0d1527;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-top:1px solid var(--line2)}
 tfoot td.sel{color:var(--accent);text-align:center;font-weight:700;font-family:var(--mono)}
 .col-chk{width:34px;text-align:center}
@@ -90,6 +92,7 @@ input[type=checkbox]{accent-color:var(--accent)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid transparent}
 .badge.ok{background:rgba(52,211,153,.12);color:var(--ok);border-color:rgba(52,211,153,.35)}
 .badge.warn{background:rgba(251,191,36,.12);color:var(--warn);border-color:rgba(251,191,36,.35)}
+.badge.blue{background:rgba(96,165,250,.12);color:var(--blue);border-color:rgba(96,165,250,.35)}
 .badge.err{background:rgba(248,113,113,.12);color:var(--red);border-color:rgba(248,113,113,.35)}
 .badge.unk{background:rgba(148,163,184,.12);color:var(--muted);border-color:rgba(148,163,184,.35)}
 .badge.muted{background:transparent;color:var(--dim);border-color:var(--line)}
@@ -113,12 +116,13 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .spec-meta b{color:var(--text);font-weight:600}
 .spec-meta .labs{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;font-family:var(--mono);font-size:11px;max-width:100%}
 .lchip{display:inline-flex;align-items:center;gap:3px;padding:1px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);white-space:nowrap}
-.lchip .lk{color:var(--violet)}
-.lchip .lv{color:var(--teal)}
+.lchip .lk{color:var(--teal)}
+.lchip .lv{color:#ffc87a}
 .lchip .eq{color:var(--dim)}
 .spec-meta code{background:rgba(56,189,248,.08);padding:1px 6px;border-radius:6px}
 .spec-list{flex:0 0 270px;max-width:310px;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
 .spec-tools{display:flex;flex-direction:column;gap:8px;padding:10px;border-bottom:1px solid var(--line)}
+.spec-tools select{width:100%;max-width:none}
 .spec-tools input[type=search]{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--text);font-size:12px;outline:none;box-sizing:border-box}
 .spec-tools input[type=search]:focus{border-color:var(--accent)}
 .spec-chips{display:flex;flex-wrap:wrap;gap:6px}
@@ -128,15 +132,15 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .chip .n{opacity:.6;margin-left:4px}
 .spec-items{flex:1;overflow-y:auto;padding:10px}
 .spec-cat{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin:10px 2px 4px;white-space:nowrap}
-.spec-item{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;margin:2px 0;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text);font-size:12px}
+.spec-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;padding:6px 8px;margin:2px 0;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text);font-size:12px}
 .spec-item:hover{background:rgba(56,189,248,.08)}
 .spec-item.active{background:rgba(56,189,248,.12);border-color:var(--accent)}
-.spec-kind{flex:0 0 auto;min-width:84px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);font-family:var(--mono)}
-.spec-item .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spec-kind{flex:0 0 auto;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);font-family:var(--mono)}
+.spec-item .nm{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spec-item .sns{flex:0 0 auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
-.spec-item .scx{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--violet);font-family:var(--mono);white-space:nowrap;background:rgba(167,139,250,.1);padding:0 6px;border-radius:999px}
-.spec-item .age{flex:0 0 auto;margin-left:6px;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
-.spec-item .reason{flex:0 0 auto;margin-left:auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.spec-item .scx{flex:0 0 auto;font-size:10px;color:var(--violet);font-family:var(--mono);white-space:nowrap;background:rgba(167,139,250,.1);padding:0 6px;border-radius:999px;margin-top:2px}
+.spec-item .age{flex:0 0 auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap;margin-top:2px}
+.spec-item .reason{flex:0 0 auto;font-size:10px;color:var(--dim);font-family:var(--mono);white-space:nowrap;margin-top:2px}
 .search-stat{font-size:10px;color:var(--dim);font-family:var(--mono);min-height:12px}
 .search-stat.hit{color:var(--accent)}
 .spec-body{flex:1;overflow:auto;padding:14px 18px;margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;color:#cdd9f0;white-space:pre-wrap;word-break:break-word;background:#070c19}
@@ -152,7 +156,8 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .modal-close:hover{border-color:var(--red);background:rgba(248,113,113,.12);color:#f87171}
 .modal-tools{margin-left:auto;display:flex;flex-direction:column;align-items:stretch;gap:8px;flex:1 1 auto;min-width:0}
 .mt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .mt-row button{flex:0 0 auto}
+  .mt-row button,.mt-row select{flex:0 0 auto;height:34px;box-sizing:border-box;padding:0 12px;font-size:12px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center}
+  .mt-row select{padding:0 10px;font-family:var(--sans)}
 .tgl{font-size:12px;padding:6px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--text);white-space:nowrap;font-weight:600}
 .tgl:hover{border-color:var(--warn)}
 .tgl.on{background:var(--warn);border-color:var(--warn);color:#1a1204;box-shadow:0 0 12px rgba(251,191,36,.45)}
@@ -181,6 +186,18 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .conn.wait{color:var(--warn);border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
 .conn.done{color:var(--accent);border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.08)}
 .count{font-size:12px;color:var(--text);font-family:var(--mono);white-space:nowrap;border-radius:999px;padding:5px 12px;border:1px solid var(--line);background:var(--bg2)}
+#eventsModal .tablewrap{width:100%;max-width:none}
+#eventsModal #evFilter{width:240px;flex:0 0 auto}
+#eventsModal #evCtx{width:auto;max-width:none}
+#eventsModal #evTypeSeg{flex:0 0 auto}
+#evTypeSeg:has(.seg-btn:nth-child(1) input:checked) .seg-thumb{left:0;border-radius:8px 4px 4px 8px}
+#evTypeSeg:has(.seg-btn:nth-child(2) input:checked) .seg-thumb{left:58px;border-radius:4px}
+#evTypeSeg:has(.seg-btn:nth-child(3) input:checked) .seg-thumb{left:116px;border-radius:4px 8px 8px 4px}
+#eventsModal .table-scroll table{width:auto;min-width:100%;table-layout:auto}
+#eventsModal .table-scroll th:not(.msg),#eventsModal .table-scroll td:not(.msg){white-space:nowrap}
+#eventsModal .table-scroll th.msg,#eventsModal .table-scroll td.msg{white-space:normal;word-break:break-word;width:100%;min-width:0}
+#eventsModal .table-scroll.no-wrap table td.msg,#eventsModal .table-scroll.no-wrap table th.msg{white-space:nowrap;word-break:normal}
+#eventsModal .table-scroll.no-wrap table{width:100%;min-width:1200px}
 .log-body{flex:1;overflow-y:auto;padding:8px 0;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#070c19;--ctxw:9ch;--podw:16ch}
 .log-body.no-wrap{overflow-x:auto}
 .log-body.no-wrap .logline{min-width:max-content}
@@ -199,7 +216,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 .lb-msg mark{background:var(--warn);color:#1a1204;border-radius:3px;padding:0 2px}
 .spec-body mark{background:var(--warn);color:#1a1204;border-radius:2px;padding:0 1px}
 .spec-body .y-k{color:#2dd4bf}
-  .spec-body .y-v{color:#c29cff}
+.spec-body .y-v{color:var(--text)}
 .spec-body .y-q{color:#7ee2a8}
 .spec-body .y-n{color:#ffc87a}
 .spec-body .y-b{color:#c29cff}
@@ -234,11 +251,11 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
   <h1>KubeLogs</h1>
   <span class="updated" id="updated">{{.Generated.Format "2006-01-02 15:04:05"}}</span>
   <div class="auto">
-    <button id="autoBtn" title="Toggle automatic table refresh">Auto: off</button>
+    <button id="autoBtn" title="Toggle automatic table refresh">Update</button>
     <select id="autoInt" title="Refresh interval">
       <option value="5">5s</option>
-      <option value="10">10s</option>
-      <option value="15" selected>15s</option>
+      <option value="10" selected>10s</option>
+      <option value="15">15s</option>
       <option value="30">30s</option>
       <option value="60">60s</option>
     </select>
@@ -250,7 +267,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 {{end}}
 
 <section class="cards" id="cards">
-{{range $i,$c := .Cards}}{{if lt $i 9}}
+{{range $i,$c := .Cards}}{{if lt $i 10}}
   <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
     <div class="label">{{.Label}}</div>
     <div class="value">{{.Value}}</div>
@@ -258,7 +275,7 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 {{end}}{{end}}
 </section>
 <section class="cards row2" id="cards2">
-{{range $i,$c := .Cards}}{{if ge $i 9}}
+{{range $i,$c := .Cards}}{{if ge $i 10}}
   <div class="card {{.Color}}" title="{{.Hint}}"{{if .Scope}} data-scope="{{.Scope}}"{{end}}>
     <div class="label">{{.Label}}</div>
     <div class="value">{{.Value}}</div>
@@ -271,15 +288,20 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
     <input id="fQ" type="search" placeholder="Filter by pod or container name" autocomplete="off">
     <span class="ico">&#8981;</span>
   </div>
-  <select id="fKind"><option value="">Workload: all</option></select>
   <select id="fCtx"><option value="">Cluster: all</option>{{range .Contexts}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNs"><option value="">Namespace: all</option>{{range .Namespaces}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <select id="fNode"><option value="">Node: all</option>{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select id="fKind"><option value="">Workload: all</option></select>
   <select id="fPhase">
     <option value="">Phase: all</option>
     {{range .Phases}}<option value="{{.}}">{{.}}</option>{{end}}
   </select>
+  <select id="fState">
+    <option value="">State: all</option>
+    {{range .States}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select>
   <div class="actions">
+    <button id="btnClear" title="Clear all selections">Clear</button>
     <button class="primary" id="btnOpen">Show logs</button>
   </div>
 </section>
@@ -293,7 +315,6 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <th class="col-chk"><input type="checkbox" id="selectAll" title="Select all visible"></th>
             <th data-key="ctx">Cluster</th>
             <th data-key="ns">Namespace</th>
-            <th data-key="node">Node</th>
             <th data-key="pod">Pod</th>
             <th data-key="cont">Container</th>
             <th data-key="age">Age</th>
@@ -317,7 +338,6 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <td class="chk"><input type="checkbox" class="row-check" value="{{.ID}}"></td>
             <td class="ctx">{{.Context}}</td>
             <td class="ns">{{.Namespace}}</td>
-            <td class="node">{{.Node}}</td>
             <td class="pod">{{.Name}}</td>
             <td class="cont">{{.Container}}</td>
             <td class="created" title="created {{.Created}}">{{.Age}}</td>
@@ -329,13 +349,13 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <td class="mem hide-sm hide-md" title="Memory usage/limit, % of limit">{{.Mem}}</td>
           </tr>
         {{else}}
-          <tr><td colspan="13" class="empty">No pods found. Check your kubeconfig and cluster availability.</td></tr>
+          <tr><td colspan="12" class="empty">No pods found. Check your kubeconfig and cluster availability.</td></tr>
         {{end}}
         </tbody>
         <tfoot>
           <tr>
             <td class="sel" id="selFoot">0</td>
-            <td colspan="12" id="selFootLabel">containers selected</td>
+            <td colspan="11" id="selFootLabel">containers selected</td>
           </tr>
         </tfoot>
       </table>
@@ -346,7 +366,6 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-window">
     <header class="modal-head">
-      <h2>Cluster logs</h2>
       <div class="modal-tools">
         <div class="mt-row" id="toolsFilters">
           <input id="logFilter" type="search" placeholder="Filter log content..." autocomplete="off">
@@ -374,12 +393,10 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
           <button id="followChk" class="tgl on" title="Follow new lines">Follow</button>
           <button id="btnPause" class="tgl" title="Pause / resume the stream">Pause</button>
           <button id="autoScroll" class="tgl on" title="Auto scroll to the newest line">Scroll</button>
-          <span class="conn wait" id="connState">-</span>
-          <span class="count" id="lineCount">0</span>
           <button id="btnClear">Clear</button>
           <button id="btnDownload">Download</button>
           <select id="sinceSel" class="sel" title="Time window: how far back to load log history">
-            <option value="">All</option>
+            <option value="">Age: all</option>
             <option value="1h">1h</option>
             <option value="3h">3h</option>
             <option value="6h">6h</option>
@@ -389,8 +406,8 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <option value="72h">72h</option>
             <option value="168h">168h</option>
           </select>
-          <select id="linesSel" class="sel" title="Number of recent lines to load (Follow = no line limit)">
-            <option value="0" selected>Follow</option>
+          <select id="linesSel" class="sel" title="Number of recent lines to load (All = live only, no history)">
+            <option value="0" selected>History: no</option>
             <option value="100">100</option>
             <option value="500">500</option>
             <option value="1000">1000</option>
@@ -399,6 +416,8 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
             <option value="5000">5000</option>
             <option value="10000">10000</option>
           </select>
+          <span class="conn wait" id="connState">-</span>
+          <span class="count" id="lineCount">0</span>
         </div>
       </div>
       <button id="btnClose" class="modal-close" title="Close">&#10005;</button>
@@ -436,31 +455,41 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 <div id="eventsModal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-window">
     <header class="modal-head">
-      <h2>Cluster events <span id="evTitle"></span></h2>
+      <h2>Resources <span>Events</span></h2>
       <button id="btnEvClose" class="modal-close" title="Close">&#10005;</button>
     </header>
     <div class="spec-tools">
-      <select id="evType">
-        <option value="">Type: all</option>
-        <option value="Warning">Warning</option>
-        <option value="Normal">Normal</option>
-      </select>
-      <input id="evFilter" type="search" placeholder="Filter events (reason, object, message)..." autocomplete="off">
-      <span class="search-stat" id="evStat"></span>
+      <div class="mt-row">
+        <input id="evFilter" type="search" placeholder="Filter by event messages" autocomplete="off">
+        <select id="evCtx" title="Filter by cluster">
+          <option value="">Cluster: all</option>
+        </select>
+        <div class="seg" id="evTypeSeg" title="Filter by event type (mutually exclusive): All, Normal, Warning">
+          <label class="seg-btn"><input type="radio" name="evType" value="" checked><span>All</span></label>
+          <label class="seg-btn"><input type="radio" name="evType" value="Normal"><span>Normal</span></label>
+          <label class="seg-btn"><input type="radio" name="evType" value="Warning"><span>Warning</span></label>
+          <span class="seg-thumb"></span>
+        </div>
+        <label class="sw" title="Wrap long messages">
+          <input type="checkbox" id="evWrap" checked><span class="trk"></span>Word-wrap
+        </label>
+        <span class="count" id="evStat"></span>
+      </div>
+      <div class="spec-chips" id="evKinds"></div>
     </div>
     <div class="tablewrap">
       <div class="panel">
-        <div class="table-scroll">
+        <div class="table-scroll" id="evScroll">
           <table id="eventsTable">
             <thead>
               <tr>
-                <th>Age</th>
-                <th>Cluster</th>
-                <th>Namespace</th>
-                <th>Object</th>
-                <th>Type</th>
-                <th>Reason</th>
-                <th>Message</th>
+                <th class="age">Age</th>
+                <th class="ctx">Cluster</th>
+                <th class="ns">Namespace</th>
+                <th class="name">Object</th>
+                <th class="type">Type</th>
+                <th class="reason">Reason</th>
+                <th class="msg">Message</th>
               </tr>
             </thead>
             <tbody id="eventsBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
@@ -476,11 +505,12 @@ td.created{color:var(--dim);font-size:12px;font-family:var(--mono)}
 "use strict";
 var $ = function (s) { return document.querySelector(s); };
 var INIT_STATS = {avail: {{.Stats.AvailCtx}}, total: {{.Stats.Contexts}}, cpuTotal: {{.Stats.CpuTotalMilli}}, memTotal: {{.Stats.MemTotalBytes}}};
+var INIT_NS = {{.NSJSON}};
 var modal = $("#modal");
 var logBody = $("#logBody");
 var tbody = $("#tbody");
-var fQ = $("#fQ"), fKind = $("#fKind"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPhase = $("#fPhase");
-var selectAll = $("#selectAll"), btnOpen = $("#btnOpen");
+var fQ = $("#fQ"), fKind = $("#fKind"), fCtx = $("#fCtx"), fNs = $("#fNs"), fNode = $("#fNode"), fPhase = $("#fPhase"), fState = $("#fState");
+var selectAll = $("#selectAll"), btnOpen = $("#btnOpen"), btnClear = $("#btnClear");
 var selFoot = $("#selFoot"), selFootLabel = $("#selFootLabel");
 var connState = $("#connState"), lineCountEl = $("#lineCount"), selInfo = $("#selInfo");
 var logFilter = $("#logFilter"), insens = $("#insensChk"), ctxChk = $("#ctxChk"), autoScroll = $("#autoScroll");
@@ -500,6 +530,7 @@ var shownLines = 0;
 var maxCtxW = 9, maxPodW = 16;
 var sortKey = "ctx";
 var sortDir = 1;
+var kindDefaulted = false;
 
 function norm(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
 
@@ -523,7 +554,7 @@ function populateKindFilter() {
   fKind.appendChild(o);
   Object.keys(kinds).sort().forEach(function (k) {
     var opt = document.createElement("option");
-    opt.value = k; opt.textContent = k;
+    opt.value = k; opt.textContent = k + "s";
     fKind.appendChild(opt);
   });
   if (hasBare) {
@@ -531,9 +562,14 @@ function populateKindFilter() {
     ob.value = "_pod"; ob.textContent = "Pod (no owner)";
     fKind.appendChild(ob);
   }
-  var ok = false;
-  Array.prototype.forEach.call(fKind.options, function (op) { if (op.value === prev) ok = true; });
-  fKind.value = ok ? prev : "";
+  if (prev === "" && !kindDefaulted && kinds["Deployment"]) {
+    fKind.value = "Deployment";
+  } else {
+    var ok = false;
+    Array.prototype.forEach.call(fKind.options, function (op) { if (op.value === prev) ok = true; });
+    fKind.value = ok ? prev : "";
+  }
+  kindDefaulted = true;
 }
 
 function parseCpuMilli(v) {
@@ -559,8 +595,11 @@ function parseMemKi(v) {
   return n * mult;
 }
 
-// Пересчёт «подовых» карточек по текущим фильтрам (Clusters/Ns/Pods/Containers/CPU/MEM).
-// Знаменатели allocatable берут из сводки ECLISPных данных (INIT_STATS или свежий /api/pods).
+// Пересчёт карточек по текущим фильтрам. «Подовые» карточки
+// (Clusters/Ns/Pods/Containers/CPU/MEM) считаются по видимым строкам таблицы,
+// а Jobs/Charts/Service/Configs/Events/PVC — по статистике per-cluster+namespace
+// (INIT_NS или свежий /api/pods), ограниченной выбранным узлом/кластером/namespace.
+// Знаменатели allocatable берут из сводки (INIT_STATS или свежий /api/pods).
 function recalcCards() {
   var src = (window.__kubelogsData && window.__kubelogsData.stats) || INIT_STATS;
   var ctxSet = {}, nsSet = {}, podSet = {}, podRunning = 0, cont = 0, contRunning = 0;
@@ -590,6 +629,103 @@ function recalcCards() {
     setCardValue("CPU", fmtCore(cpuUse) + " / " + fmtCore(src.cpuTotal || 0));
     setCardValue("Memory", fmtGiB(memUse) + " / " + fmtGiB(src.memTotal || 0) + " GiB");
   }
+  // Карточки ресурсов (Jobs/Charts/Service/Configs/Events/PVC) считаются из
+  // статистики per-cluster+namespace (INIT_NS или свежий /api/pods). Они всегда
+  // привязаны к выбранному кластеру: при фильтре по кластеру/ноде/namespace
+  // суммируются только подходящие пары (ctx, ns), при «все кластера» —
+  // все записи NS (это и есть серверные итоги).
+  var nsData = (window.__kubelogsData && window.__kubelogsData.ns) || INIT_NS;
+  var keys = {};
+  if (fNode.value) {
+    // Узел: namespace берём из видимых строк отфильтрованной таблицы.
+    rows.forEach(function (tr) {
+      if (tr.style.display === "none") return;
+      if (tr.dataset && tr.dataset.ctx) keys[tr.dataset.ctx + "|" + tr.dataset.ns] = 1;
+    });
+  } else if (fNs.value) {
+    keys = nsKeysForNamespace(nsData, fNs.value, fCtx.value);
+  } else if (fCtx.value) {
+    // Кластер: все namespace этого кластера из NS (включая namespace без подов).
+    keys = nsKeysForCtx(nsData, fCtx.value);
+  } else {
+    // Все кластеры: полная сводка.
+    keys = allNSCount(nsData);
+  }
+  var jobs = 0, jobsDone = 0, net = 0, cfg = 0, ev = 0, charts = 0;
+  var pvcBound = 0, pvcTotal = 0, pvcBoundBytes = 0, pvcTotalBytes = 0, pvcOk = 0;
+  for (var k in keys) {
+    var s = nsData[k];
+    if (!s) continue;
+    jobs += s.Jobs; jobsDone += s.JobsDone;
+    net += s.Services; cfg += s.Configs; ev += s.EventsWarning; charts += s.Charts;
+    pvcBound += s.PVCBound; pvcTotal += s.PVCTotal;
+    pvcBoundBytes += s.PVCBoundBytes; pvcTotalBytes += s.PVCTotalBytes;
+    if (s.PVCOk) pvcOk = 1;
+  }
+  // Nodes кластер-scoped и лежит на ключе "ctx|cluster", который входит в keys при
+  // выборе кластера и «все кластера», но отсутствует в паре (ctx,ns) при фильтре по
+  // ноде/namespace. Поэтому Nodes всегда пересчитываем за кластеры текущего выбора,
+  // чтобы карточка не «залипала» на старом значении при возврате к «все кластера».
+  var clCtx = {};
+  if (fCtx.value) {
+    clCtx[fCtx.value] = 1;
+  } else {
+    for (var k in keys) {
+      var sep = k.indexOf("|");
+      if (sep > 0) clCtx[k.slice(0, sep)] = 1;
+    }
+  }
+  var nodeReady = 0, nodeTotal = 0, nodeOk = 0;
+  for (var c in clCtx) {
+    var cn = nsData[c + "|cluster"];
+    if (!cn) continue;
+    nodeReady += cn.NodeReady; nodeTotal += cn.NodeTotal;
+    if (cn.NodeOk) nodeOk = 1;
+  }
+  setCardValue("Jobs", fracTxt(jobsDone, jobs));
+  setCardValue("Service", String(net));
+  setCardValue("Configs", String(cfg));
+  setCardValue("Charts", String(charts));
+  setCardValue("Events", String(ev));
+  setCardValue("PVC size", fmtGiB(pvcBoundBytes) + " / " + fmtGiB(pvcTotalBytes) + " GiB");
+  setCardValue("PVC/PV Count", pvcOk > 0 ? fracTxt(pvcBound, pvcTotal) : String(pvcBound));
+  setCardValue("Nodes", nodeOk > 0 ? fracTxt(nodeReady, nodeTotal) : String(nodeReady));
+  var scoped = !!(fNode.value || fCtx.value || fNs.value);
+  var tl = scoped ? ", for selected cluster/node/namespace" : " across clusters";
+  setCardHint("Jobs", "succeeded jobs / total (jobs + cronjobs)" + tl);
+  setCardHint("Service", "services across clusters" + tl);
+  setCardHint("Configs", "configmaps + secrets (list includes RBAC)" + tl);
+  setCardHint("Charts", "helm releases" + tl);
+  setCardHint("Events", "events with type=Warning" + tl);
+  setCardHint("PVC size", "capacity allocated to PV / total PVC requested" + tl);
+  setCardHint("PVC/PV Count", "bound PVC / total PVC (PV, PersistentVolumeClaim, StorageClass)" + tl);
+}
+
+function nsKeysForCtx(nsData, ctx) {
+  var out = {};
+  for (var k in nsData) {
+    if (k.indexOf(ctx + "|") === 0) out[k] = 1;
+  }
+  return out;
+}
+
+function nsKeysForNamespace(nsData, ns, ctx) {
+  var out = {};
+  for (var k in nsData) {
+    var idx = k.indexOf("|");
+    if (idx === -1) continue;
+    var c = k.slice(0, idx), n = k.slice(idx + 1);
+    if (n !== ns) continue;
+    if (ctx && c !== ctx) continue;
+    out[k] = 1;
+  }
+  return out;
+}
+
+function allNSCount(nsData) {
+  var out = {};
+  for (var k in nsData) out[k] = 1;
+  return out;
 }
 
 function optsCnt(obj) {
@@ -615,12 +751,33 @@ function setCardValue(label, value) {
   return null;
 }
 
+function setCardHint(label, hint) {
+  var hosts = [document.getElementById("cards"), document.getElementById("cards2")];
+  for (var i = 0; i < hosts.length; i++) {
+    var h = hosts[i];
+    if (!h) continue;
+    var cards = h.querySelectorAll(".card");
+    for (var j = 0; j < cards.length; j++) {
+      var l = cards[j].querySelector(".label");
+      if (l && l.textContent === label) {
+        cards[j].title = hint;
+        return;
+      }
+    }
+  }
+}
+
+function fracTxt(a, b) {
+  if ((b <= 0) && (a <= 0)) return "0/0";
+  return a + "/" + b;
+}
+
 function fmtCore(milli) { return (milli / 1000).toFixed(2); }
 function fmtGiB(bytes) { return (bytes / (1 << 30)).toFixed(2); }
 
 function applyFilters() {
   var q = norm(fQ.value);
-  var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value, w = fKind.value;
+  var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value, w = fKind.value, s = fState.value;
   var vis = 0;
   rows.forEach(function (tr) {
     var ok = (!q || rowTokens(tr).indexOf(q) !== -1);
@@ -628,6 +785,7 @@ function applyFilters() {
     if (ok && n && tr.dataset.ns !== n) ok = false;
     if (ok && nd && tr.dataset.node !== nd) ok = false;
     if (ok && p && tr.dataset.phase !== p) ok = false;
+    if (ok && s && tr.dataset.state !== s) ok = false;
     if (ok && w) {
       if (w === "_pod") { if (tr.dataset.workload) ok = false; }
       else if (tr.dataset.workload !== w) ok = false;
@@ -641,7 +799,7 @@ function applyFilters() {
       e2 = document.createElement("tr");
       e2.id = "emptyRow";
       var td = document.createElement("td");
-      td.colSpan = 13;
+      td.colSpan = 12;
       td.className = "empty";
       td.textContent = "Nothing found for the given filters.";
       e2.appendChild(td);
@@ -656,6 +814,11 @@ function updateSel() {
   selFoot.textContent = n;
   selFootLabel.textContent = n === 1 ? "container selected" : "containers selected";
   btnOpen.disabled = n === 0;
+  var boxes = tbody.querySelectorAll(".row-check");
+  for (var i = 0; i < boxes.length; i++) {
+    var tr = boxes[i].closest ? boxes[i].closest("tr") : null;
+    if (tr) tr.classList.toggle("row-on", boxes[i].checked);
+  }
 }
 
 function checkAllVisible() {
@@ -668,12 +831,29 @@ function checkAllVisible() {
   updateSel();
 }
 
+function nodesForCtx() {
+  var c = fCtx.value, n = fNs.value;
+  var set = {}, out = [];
+  rows.forEach(function (tr) {
+    if (!tr.dataset || !tr.dataset.node) return;
+    if (c && tr.dataset.ctx !== c) return;
+    if (n && tr.dataset.ns !== n) return;
+    if (!set[tr.dataset.node]) { set[tr.dataset.node] = 1; out.push(tr.dataset.node); }
+  });
+  return out.sort();
+}
+
+function scopeNodeList() {
+  fillSelect(fNode, nodesForCtx(), "Node: all");
+}
+
 fQ.addEventListener("input", applyFilters);
 fKind.addEventListener("change", applyFilters);
-fCtx.addEventListener("change", applyFilters);
-fNs.addEventListener("change", applyFilters);
+fCtx.addEventListener("change", function () { scopeNodeList(); applyFilters(); });
+fNs.addEventListener("change", function () { scopeNodeList(); applyFilters(); });
 fNode.addEventListener("change", applyFilters);
 fPhase.addEventListener("change", applyFilters);
+fState.addEventListener("change", applyFilters);
 selectAll.addEventListener("change", checkAllVisible);
 var selAnchor = -1;
 tbody.addEventListener("click", function (e) {
@@ -748,7 +928,6 @@ function doRefresh() {
 
 function setAuto(on) {
   autoOn = on;
-  autoBtn.textContent = on ? "Auto: on" : "Auto: off";
   autoBtn.classList.toggle("on", on);
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (on) {
@@ -795,11 +974,12 @@ function fillSelect(sel, items, label) {
   sel.value = prev;
 }
 
-function renderSelects(ctxs, nss, nodes, phases) {
+function renderSelects(ctxs, nss, nodes, phases, states) {
   fillSelect(fCtx, ctxs, "Cluster: all");
   fillSelect(fNs, nss, "Namespace: all");
   fillSelect(fNode, nodes, "Node: all");
   fillSelect(fPhase, phases, "Phase: all");
+  fillSelect(fState, states, "State: all");
 }
 
 function phaseCss(ph) {
@@ -820,7 +1000,7 @@ function renderTable(pods) {
   if (!pods || pods.length === 0) {
     var tr0 = document.createElement("tr");
     var td0 = document.createElement("td");
-    td0.colSpan = 13; td0.className = "empty";
+    td0.colSpan = 12; td0.className = "empty";
     td0.textContent = "No pods found. Check your kubeconfig and cluster availability.";
     tr0.appendChild(td0);
     tbody.appendChild(tr0);
@@ -862,7 +1042,6 @@ function renderTable(pods) {
     tr.appendChild(t1);
     tr.appendChild(td("ctx", p.context));
     tr.appendChild(td("ns", p.namespace));
-    tr.appendChild(td("node", p.node));
     tr.appendChild(td("pod", p.name));
     tr.appendChild(td("cont", p.container));
 
@@ -877,9 +1056,9 @@ function renderTable(pods) {
     tr.appendChild(t5);
 
     var t6 = td("cpu hide-sm hide-md", p.cpu || "");
-    t6.title = "CPU usage/limit, % of limit"; tr.appendChild(t6);
+    t6.title = "% of limit (CPU usage / limit)"; tr.appendChild(t6);
     var t7 = td("mem hide-sm hide-md", p.mem || "");
-    t7.title = "Memory usage/limit, % of limit"; tr.appendChild(t7);
+    t7.title = "% of limit (MEM usage / limit)"; tr.appendChild(t7);
 
     tbody.appendChild(tr);
   });
@@ -893,10 +1072,11 @@ function renderAll(d) {
   tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
   window.__kubelogsData = d;
   var cards = d.cards || [];
-  renderCards($("#cards"), cards.slice(0, 9));
-  renderCards($("#cards2"), cards.slice(9));
-  renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || []);
+  renderCards($("#cards"), cards.slice(0, 10));
+  renderCards($("#cards2"), cards.slice(10));
+  renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || [], d.states || []);
   renderTable(d.pods || []);
+  scopeNodeList();
   tbody.querySelectorAll(".row-check").forEach(function (cb) {
     if (checked[cb.value]) cb.checked = true;
   });
@@ -920,6 +1100,7 @@ cacheRows();
 populateKindFilter();
 applyFilters();
 updateSel();
+setAuto(true);
 
 /* ================= live log modal ================= */
 
@@ -969,6 +1150,13 @@ function openModal() {
 
 btnOpen.addEventListener("click", openModal);
 
+btnClear.addEventListener("click", function () {
+  tbody.querySelectorAll(".row-check").forEach(function (cb) { cb.checked = false; });
+  selectAll.checked = false;
+  selAnchor = -1;
+  updateSel();
+});
+
 function closeStream() {
   if (ES) { ES.close(); ES = null; }
 }
@@ -994,7 +1182,7 @@ function startStream() {
   logBody.scrollTop = 0;
   settleStart();
   var params = ["since=" + encodeURIComponent(sinceSel.value)];
-  if (linesSel.value != "0") params.push("lines=" + linesSel.value);
+  params.push("lines=" + (linesSel.value === "0" ? "1" : linesSel.value));
   if (!followOn()) params.push("follow=0");
   ids.forEach(function (id) { params.push("sel=" + encodeURIComponent(id)); });
   ES = new EventSource("/logs?" + params.join("&"));
@@ -1446,7 +1634,7 @@ var KIND_LABELS = {
   certificate: "Certificate", issuer: "Issuer", clusterissuer: "ClusterIssuer"
 };
 function kindLabel(k) { return KIND_LABELS[k] || (k.charAt(0).toUpperCase() + k.slice(1)); }
-var relState = { tr: null, items: [], kinds: {}, loaded: null, yaml: "", needle: "" };
+var relState = { tr: null, items: [], kinds: {}, ctx: "", loaded: null, yaml: "", needle: "" };
 
 function normStr(s) { return (s || "").toLowerCase(); }
 
@@ -1465,7 +1653,7 @@ function renderSpecMeta(tr, d) {
   var lbl = document.createElement("span");
   lbl.className = "labs";
   var b = document.createElement("b");
-  b.textContent = "labels ";
+  b.textContent = "Shared labels ";
   lbl.appendChild(b);
 
   var pairs = labelPairs(d.labels, tr.dataset.labels);
@@ -1697,10 +1885,12 @@ function openSpec(tr, viaCont) {
 }
 
 var CARD_SCOPE_TITLES = {
-  ctx: "Clusters", ns: "Namespaces", nodes: "Nodes", svc: "Services",
-  jobs: "Jobs + CronJobs", configs: "Config (ConfigMaps and Secrets)",
-  workloads: "Workloads (Deployments, StatefulSets, DaemonSets, ReplicaSets)",
-  pods: "Pods", pvc: "PV / PVC", events: "Events"
+  ctx: "Cluster Configs", ns: "Namespaces", nodes: "Nodes",
+  svc: "Networks (Service, Ingress, Endpoints, NetworkPolicy)",
+  jobs: "Jobs and CronJobs", configs: "Resources Configs (ConfigMap, Secret) and RBAC (ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding)",
+  workloads: "Workloads (Deployments, ReplicaSets, StatefulSets, DaemonSets)",
+  pods: "Pods", pvc: "Volumes (PersistentVolumeClaim, PersistentVolume, StorageClass)", events: "Events",
+  charts: "Helm Charts", limits: "Pods with limits"
 };
 
 function cardTitle(scope) { return CARD_SCOPE_TITLES[scope] || "Resources"; }
@@ -1732,6 +1922,32 @@ function cardItemsFromData() {
   }));
 }
 
+// Список манифестов (под → контейнер), в которых прописаны CPU/Memory hard limits.
+// Считается из уже загруженных данных страницы: суммирует лимиты контейнеров пода.
+function limitsItemsFromData() {
+  var rows = (window.__kubelogsData && window.__kubelogsData.pods) || [];
+  var map = {}, order = [];
+  rows.forEach(function (p) {
+    var cpu = parseCpuMilli(p.cpulim);
+    var mem = parseMemKi(p.memlim);
+    if (!cpu && !mem) return;
+    var key = p.context + "|" + p.namespace + "|" + p.name;
+    if (!map[key]) {
+      map[key] = { name: p.name, cpu: 0, mem: 0, ctx: p.context, ns: p.namespace, age: p.age || "" };
+      order.push(key);
+    }
+    map[key].cpu += cpu; map[key].mem += mem;
+  });
+  return sortByCtxNsName(order.map(function (k) {
+    var p = map[k];
+    return { kind: "pod", name: p.name,
+             reason: (p.cpu ? "CPU " + fmtCore(p.cpu) : "") +
+                     (p.cpu && p.mem ? " · " : "") +
+                     (p.mem ? "MEM " + fmtGiB(p.mem) + " GiB" : ""),
+             age: p.age || "", ctx: p.ctx, ns: p.ns };
+  }));
+}
+
 function openSpecList(scope) {
   if (scope === "events") { openEvents(); return; }
   relState.tr = { dataset: {} };
@@ -1757,6 +1973,26 @@ function openSpecList(scope) {
       return;
     }
     enterSpec(items, "No pod data loaded yet. Refresh the page.", "pod");
+    return;
+  }
+  if (scope === "limits") {
+    var limItems = limitsItemsFromData();
+    if (!limItems.length) {
+      specBody.textContent = "Loading...";
+      specBody.className = "spec-body";
+      fetch("/api/pods")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          window.__kubelogsData = d;
+          enterSpec(limitsItemsFromData(), "No pods with CPU/memory hard limits. Refresh the page.", "pod");
+        })
+        .catch(function (err) {
+          specBody.textContent = "Failed to load pod data: " + err;
+          specBody.className = "spec-body error";
+        });
+      return;
+    }
+    enterSpec(limItems, "No pods with CPU/memory hard limits.", "pod");
     return;
   }
   specBody.textContent = "Loading...";
@@ -1817,21 +2053,37 @@ $("#btnSpecClose").addEventListener("click", closeSpec);
 specFilter.addEventListener("input", renderSpecList);
 
 /* ================= events modal ================= */
-var evModal = $("#eventsModal"), evBodyEl = $("#eventsBody"), evTitle = $("#evTitle");
-var evType = $("#evType"), evFilter = $("#evFilter"), evStat = $("#evStat");
-var evState = { items: [] };
+var evModal = $("#eventsModal"), evBodyEl = $("#eventsBody");
+var evTypeSeg = $("#evTypeSeg"), evFilter = $("#evFilter"), evStat = $("#evStat");
+var evCtx = $("#evCtx"), evKinds = $("#evKinds");
+var evWrap = $("#evWrap"), evScroll = $("#evScroll");
+var evState = { items: [], kinds: {} };
+
+function evTypeValue() {
+  var r = evTypeSeg ? evTypeSeg.querySelector('input:checked') : null;
+  return r ? r.value : "";
+}
+
+function evObjKind(it) {
+  var p = String(it.name || "").split("/");
+  return p.length >= 3 ? p[1] : "-";
+}
 
 function openEvents() {
-  evTitle.textContent = "type=Warning";
   evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Loading...</td></tr>';
-  evType.value = "";
+  var allBtn = evTypeSeg && evTypeSeg.querySelector('input[value=""]');
+  if (allBtn) allBtn.checked = true;
+  evCtx.value = "";
   evFilter.value = "";
-  if (evStat) { evStat.textContent = ""; evStat.className = "search-stat"; }
+  evState.kinds = {};
+  if (evStat) { evStat.textContent = ""; evStat.className = "count"; }
   evModal.classList.remove("hidden");
   fetch("/api/overview?scope=events")
     .then(function (r) { return r.json(); })
     .then(function (d) {
       evState.items = d.items || [];
+      fillEvCtx();
+      renderEvKinds();
       renderEvents();
     })
     .catch(function (err) {
@@ -1839,12 +2091,51 @@ function openEvents() {
     });
 }
 
+function fillEvCtx() {
+  var seen = {}, list = [];
+  evState.items.forEach(function (it) {
+    if (it.ctx && !seen[it.ctx]) { seen[it.ctx] = 1; list.push(it.ctx); }
+  });
+  list.sort();
+  fillSelect(evCtx, list, "Cluster: all");
+}
+
+function renderEvKinds() {
+  evKinds.innerHTML = "";
+  var counts = {};
+  evState.items.forEach(function (it) {
+    var k = evObjKind(it);
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  Object.keys(counts).sort(function (a, b) { return a < b ? -1 : a > b ? 1 : 0; }).forEach(function (k) {
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (evState.kinds[k] ? " on" : "");
+    var lbl = document.createElement("span");
+    lbl.textContent = k;
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = counts[k];
+    chip.appendChild(lbl); chip.appendChild(n);
+    chip.addEventListener("click", function () {
+      if (evState.kinds[k]) delete evState.kinds[k];
+      else evState.kinds[k] = true;
+      renderEvKinds();
+      renderEvents();
+    });
+    evKinds.appendChild(chip);
+  });
+}
+
 function renderEvents() {
-  var t = evType.value, q = normStr(evFilter.value);
+  var t = evTypeValue(), q = normStr(evFilter.value), c = evCtx.value;
+  var kinds = Object.keys(evState.kinds);
   var items = evState.items.filter(function (it) {
     if (t && it.type !== t) return false;
+    if (c && it.ctx !== c) return false;
+    if (kinds.length && !evState.kinds[evObjKind(it)]) return false;
     if (q) {
-      var hay = normStr([it.ns, it.name, it.reason, it.message].join(" "));
+      var hay = normStr(it.message || "");
       if (hay.indexOf(q) === -1) return false;
     }
     return true;
@@ -1865,7 +2156,7 @@ function renderEvents() {
       return x;
     };
     var typeBadge = document.createElement("span");
-    typeBadge.className = "badge " + (it.type === "Warning" ? "err" : "ok");
+    typeBadge.className = "badge " + (it.type === "Warning" ? "warn" : "blue");
     typeBadge.textContent = it.type || "-";
     var tdt = td(null, null);
     tdt.appendChild(typeBadge);
@@ -1887,10 +2178,15 @@ function renderEvents() {
 function closeEvents() {
   evModal.classList.add("hidden");
   evState.items = [];
+  evState.kinds = {};
 }
 $("#btnEvClose").addEventListener("click", closeEvents);
-evType.addEventListener("change", renderEvents);
+evTypeSeg.addEventListener("change", renderEvents);
+evCtx.addEventListener("change", renderEvents);
 evFilter.addEventListener("input", renderEvents);
+evWrap.addEventListener("change", function () {
+  if (evScroll) evScroll.classList.toggle("no-wrap", !evWrap.checked);
+});
 
 // Поиск по содержимому текущего манифеста — чисто на клиенте (данные уже
 // загружены в relState.yaml), без единого лишнего вызова kubectl.

@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -62,31 +64,56 @@ type Pod struct {
 }
 
 type Stats struct {
-	Contexts      int
-	AvailCtx      int
-	Namespaces    int
-	Pods          int
-	PodsRunning   int
-	Containers    int
-	Running       int
-	Services      int
-	Jobs          int // jobs + cronjobs во всех кластерах
-	JobsDone      int // успешно завершённые Job (succeeded>0, failed=0)
-	Configs       int // configmaps + secrets во всех кластерах
-	NodeReady     int
-	NodeTotal     int
-	CpuMilli      int64
-	MemBytes      int64
-	CpuLimitMilli int64 // суммарные hard-лимиты CPU всех контейнеров, м-ядра
-	MemLimitBytes int64 // суммарные hard-лимиты памяти всех контейнеров, байты
-	CpuTotalMilli int64
-	MemTotalBytes int64
+	Contexts      int    `json:"total"`
+	AvailCtx      int    `json:"avail"`
+	Namespaces    int    `json:"namespaces"`
+	Pods          int    `json:"pods"`
+	PodsRunning   int    `json:"podsRunning"`
+	Containers    int    `json:"containers"`
+	Running       int    `json:"running"`
+	Networks      int    `json:"networks"` // network-ресурсы во всех кластерах (Service, Ingress, NetworkPolicy, Endpoints)
+	Services      int    `json:"services"` // только Service во всех кластерах (карточка Service)
+	Jobs          int    `json:"jobs"`     // jobs + cronjobs во всех кластерах
+	JobsDone      int    `json:"jobsDone"` // успешно завершённые Job (succeeded>0, failed=0)
+	Configs       int    `json:"configs"`  // configmaps + secrets во всех кластерах
+	Charts        int    `json:"charts"`   // helm-релизы во всех кластерах
+	NodeReady     int    `json:"nodeReady"`
+	NodeTotal     int    `json:"nodeTotal"`
+	CpuMilli      int64  `json:"cpuMilli"`
+	MemBytes      int64  `json:"memBytes"`
+	CpuLimitMilli int64  `json:"cpuLimitMilli"` // суммарные hard-лимиты CPU всех контейнеров, м-ядра
+	MemLimitBytes int64  `json:"memLimitBytes"` // суммарные hard-лимиты памяти всех контейнеров, байты
+	CpuTotalMilli int64  `json:"cpuTotal"`
+	MemTotalBytes int64  `json:"memTotal"`
 	PVCBound      int
 	PVCTotal      int
 	PVCBoundBytes int64
 	PVCTotalBytes int64
 	PVCOk         int
+	StorageClasses int // объекты StorageClass во всех кластерах (cluster-scoped)
 	EventsWarning int // события type=Warning во всех кластерах
+}
+
+// NSStats — те же счётчики ресурсов, но по (ctx, namespace). Ключ — "ctx|ns".
+// Нужны клиенту, чтобы сворачивать карточки Jobs/Networks/Configs/PV-PVC/Events
+// при клиентском фильтре по ноде/пространству.
+type NSStats struct {
+	Networks      int
+	Services      int
+	Jobs          int
+	JobsDone      int
+	Configs       int
+	Charts        int
+	EventsWarning int
+	PVCBound      int
+	PVCTotal      int
+	PVCBoundBytes int64
+	PVCTotalBytes int64
+	PVCOk         int // 1, если в этом ctx листинг PVC реально удался
+	StorageClasses int // StorageClass (cluster-scoped): кладётся на ключ "ctx|cluster"
+	NodeReady     int
+	NodeTotal     int
+	NodeOk        int // 1, если листинг Node в этом ctx реально удался
 }
 
 type Card struct {
@@ -98,18 +125,21 @@ type Card struct {
 }
 
 // PageData — данные, которые получает шаблон и /api/pods.
-// Имена JSON-полей обязаны совпадать с теми, что использует клиентский JS.
+// Имена JSON-полей обязаны совпадать с тем, что использует клиентский JS.
 type PageData struct {
-	Pods       []Pod     `json:"pods"`
-	Contexts   []string  `json:"contexts"`
-	Namespaces []string  `json:"namespaces"`
-	Nodes      []string  `json:"nodes"`
-	Phases     []string  `json:"phases"`
-	Stats      Stats     `json:"stats"`
-	Cards      []Card    `json:"cards"`
-	Count      int       `json:"count"`
-	Generated  time.Time `json:"generated"`
-	Error      string    `json:"error"`
+	Pods       []Pod             `json:"pods"`
+	Contexts   []string          `json:"contexts"`
+	Namespaces []string          `json:"namespaces"`
+	Nodes      []string          `json:"nodes"`
+	Phases     []string          `json:"phases"`
+	States     []string          `json:"states"`
+	Stats      Stats             `json:"stats"`
+	NS         map[string]NSStats `json:"ns"`
+	NSJSON     template.JS       `json:"-"` // NS, подготовленный для вставки в <script>
+	Cards      []Card            `json:"cards"`
+	Count      int               `json:"count"`
+	Generated  time.Time         `json:"generated"`
+	Error      string            `json:"error"`
 }
 
 // Selection — один источник логов для kubectl logs.
@@ -234,18 +264,30 @@ func workloadOwnerMap(ctx string) map[string][2]string {
 
 // resolveWorkload поднимает владельца пода до верхнего уровня: ReplicaSet ->
 // Deployment, Job -> CronJob. Без резолва оставляет исходный ownerKind.
+// Резолв применяется только если владелец — известный workload (Deployment,
+// CronJob, StatefulSet, DaemonSet). Прочие владельцы (например HelmChart от
+// helm-controller) не подменяются, чтобы фильтр Workloads не показывал
+// случайные типы.
 func resolveWorkload(p *Pod, wl map[string][2]string) string {
 	if p.OwnerKind == "" {
 		return ""
 	}
 	if wl != nil {
-		if ref, ok := wl[p.Owner+"|"+strings.ToLower(p.OwnerKind)]; ok {
+		if ref, ok := wl[p.Owner+"|"+strings.ToLower(p.OwnerKind)]; ok && isWorkloadKind(ref[0]) {
 			p.OwnerKind = ref[0]
 			p.Owner = ref[1]
 			return ref[0]
 		}
 	}
 	return p.OwnerKind
+}
+
+func isWorkloadKind(kind string) bool {
+	switch strings.ToLower(kind) {
+	case "deployment", "statefulset", "daemonset", "replicaset", "job", "cronjob":
+		return true
+	}
+	return false
 }
 
 // kubectlPodList — подмножество структуры PodList из API Kubernetes, достаточное
@@ -320,11 +362,15 @@ type Overview struct {
 	PVCBoundBytes int64 // сумма ёмкости, выделенной PV из Bound PVC, байты
 	PVCTotalBytes int64 // суммарная запрошенная ёмкость всех PVC, байты
 	PVCOk         int   // контексты, где листинг PVC завершился успешно
-	Services      int   // суммарное число Service во всех кластерах
+	StorageClasses int  // суммарное число StorageClass по кластерам
+	Networks      int   // суммарное число сетевых ресурсов (Service/Ingress/NetworkPolicy/Endpoints/EndpointSlice)
+	Services      int   // суммарное число Service
 	Jobs          int   // суммарное число Jobs + CronJobs
 	JobsDone      int   // суммарное число успешно завершённых Job
 	Configs       int   // суммарное число ConfigMap + Secret
+	Charts        int   // суммарное число helm-релизов
 	EventsWarning int   // события type=Warning во всех кластерах
+	NS            map[string]NSStats // разбивка по "ctx|ns" для клиентских фильтров
 }
 
 // runKubectl выполняет kubectl с переданными аргументами и возвращает вывод.
@@ -409,7 +455,7 @@ func fetchAllReal() Overview {
 					memB += m
 				}
 			}
-			ready, total, cpuT, memT := nodesContext(ctx)
+			ready, total, cpuT, memT, nodeOk := nodesContext(ctx)
 			var wl map[string][2]string
 			mounted := make(map[string]bool)
 			out, aerr := podsForContextAll(ctx)
@@ -440,11 +486,62 @@ func fetchAllReal() Overview {
 			for i := range parsed {
 				parsed[i].Workload = resolveWorkload(&parsed[i], wl)
 			}
-			pvcBound, pvcTotal, pvcBoundBytes, pvcTotalBytes, pvcOK := pvcByContext(ctx, mounted)
-			svcCount := servicesByContext(ctx)
-			jobTotal, jobDone := countKubectlKinds(ctx, scopeKinds("jobs"))
-			cfgCount, _ := countKubectlKinds(ctx, scopeKinds("configs"))
-			evWarn := eventsByContext(ctx)
+			pvcNS := pvcByContextNS(ctx, mounted)
+			scNS := scByContext(ctx)
+			netNS := networksByContextNS(ctx)
+			svcNS := servicesByContextNS(ctx)
+			chartNS := chartsByContextNS(ctx)
+			jobNS := countKubectlKindsNS(ctx, scopeKinds("jobs"))
+			cfgNS := countKubectlKindsNS(ctx, scopeKinds("configs"))
+			evNS := eventsByContextNS(ctx)
+			nsStats := make(map[string]NSStats)
+			addNS := func(ns string, fn func(*NSStats)) {
+				if ns == "" {
+					ns = "cluster"
+				}
+				v := nsStats[ns]
+				fn(&v)
+				nsStats[ns] = v
+			}
+			addNS("", func(s *NSStats) {
+				s.NodeReady += ready
+				s.NodeTotal += total
+				if nodeOk {
+					s.NodeOk = 1
+				}
+			})
+			for ns, v := range pvcNS {
+				addNS(ns, func(s *NSStats) {
+					s.PVCBound += v.bound
+					s.PVCTotal += v.total
+					s.PVCBoundBytes += v.boundBytes
+					s.PVCTotalBytes += v.totalBytes
+					if v.listed {
+						s.PVCOk = 1
+					}
+				})
+			}
+			if scNS >= 0 {
+				addNS("", func(s *NSStats) { s.StorageClasses += scNS })
+			}
+			for ns, v := range netNS {
+				addNS(ns, func(s *NSStats) { s.Networks += v })
+			}
+			for ns, v := range svcNS {
+				addNS(ns, func(s *NSStats) { s.Services += v })
+			}
+			for ns, v := range chartNS {
+				addNS(ns, func(s *NSStats) { s.Charts += v })
+			}
+			for ns, v := range jobNS {
+				addNS(ns, func(s *NSStats) { s.Jobs += v.total; s.JobsDone += v.done })
+			}
+			for ns, v := range cfgNS {
+				addNS(ns, func(s *NSStats) { s.Configs += v.total })
+			}
+			for ns, v := range evNS {
+				addNS(ns, func(s *NSStats) { s.EventsWarning += v })
+			}
 			mu.Lock()
 			pods = append(pods, parsed...)
 			ov.CpuMilli += cpuM
@@ -453,19 +550,66 @@ func fetchAllReal() Overview {
 			ov.NodeTotal += total
 			ov.CpuTotalMilli += cpuT
 			ov.MemTotalBytes += memT
-			ov.PVCBound += pvcBound
-			ov.PVCTotal += pvcTotal
-			ov.PVCBoundBytes += pvcBoundBytes
-			ov.PVCTotalBytes += pvcTotalBytes
-			if pvcOK {
-				ov.PVCOk++
+			for _, v := range pvcNS {
+				ov.PVCBound += v.bound
+				ov.PVCTotal += v.total
+				ov.PVCBoundBytes += v.boundBytes
+				ov.PVCTotalBytes += v.totalBytes
+				if v.listed {
+					ov.PVCOk++
+				}
 			}
-			ov.Services += svcCount
-			ov.Jobs += jobTotal
-			ov.JobsDone += jobDone
-			ov.Configs += cfgCount
-			ov.EventsWarning += evWarn
+			if scNS >= 0 {
+				ov.StorageClasses += scNS
+			}
+			for _, v := range netNS {
+				ov.Networks += v
+			}
+			for _, v := range svcNS {
+				ov.Services += v
+			}
+			for _, v := range chartNS {
+				ov.Charts += v
+			}
+			for _, v := range jobNS {
+				ov.Jobs += v.total
+				ov.JobsDone += v.done
+			}
+			for _, v := range cfgNS {
+				ov.Configs += v.total
+			}
+			for _, v := range evNS {
+				ov.EventsWarning += v
+			}
 			ov.AvailCtx++
+			if ov.NS == nil {
+				ov.NS = make(map[string]NSStats)
+			}
+			for ns, v := range nsStats {
+				key := ctx + "|" + ns
+				cur := ov.NS[key]
+				cur.Networks += v.Networks
+				cur.Services += v.Services
+				cur.Jobs += v.Jobs
+				cur.JobsDone += v.JobsDone
+				cur.Configs += v.Configs
+				cur.Charts += v.Charts
+				cur.EventsWarning += v.EventsWarning
+				cur.PVCBound += v.PVCBound
+				cur.PVCTotal += v.PVCTotal
+				cur.PVCBoundBytes += v.PVCBoundBytes
+				cur.PVCTotalBytes += v.PVCTotalBytes
+				if v.PVCOk != 0 {
+					cur.PVCOk = 1
+				}
+				cur.StorageClasses += v.StorageClasses
+				cur.NodeReady += v.NodeReady
+				cur.NodeTotal += v.NodeTotal
+				if v.NodeOk != 0 {
+					cur.NodeOk = 1
+				}
+				ov.NS[key] = cur
+			}
 			mu.Unlock()
 		}(ctx)
 	}
@@ -515,14 +659,14 @@ type kubectlNodeList struct {
 // nodesContext считает готовые и общее число узлов в контексте, а также
 // суммарные allocatable-ресурсы (CPU в м-ядрах, память в байтах).
 // Один вызов kubectl (get nodes -o json), нули при ошибке/нет прав.
-func nodesContext(ctx string) (ready, total int, cpuTotal, memTotal int64) {
+func nodesContext(ctx string) (ready, total int, cpuTotal, memTotal int64, ok bool) {
 	out, err := runKubectlFn("--context", ctx, "get", "nodes", "-o", "json")
 	if err != nil {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, false
 	}
 	var list kubectlNodeList
 	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, false
 	}
 	for _, n := range list.Items {
 		total++
@@ -538,7 +682,7 @@ func nodesContext(ctx string) (ready, total int, cpuTotal, memTotal int64) {
 			memTotal += v
 		}
 	}
-	return ready, total, cpuTotal, memTotal
+	return ready, total, cpuTotal, memTotal, true
 }
 
 // kubectlPVCList — PVC с запрошенной ёмкостью (spec.resources.requests.storage)
@@ -561,55 +705,179 @@ type kubectlPVCList struct {
 	} `json:"items"`
 }
 
-// pvcByContext перечисляет PVC в кластере: считает «Bound» (привязаны к PV,
-// статус status.phase) и суммирует ёмкости. Для Bound берётся фактически
-// выделенная PV ёмкость (status.capacity.storage), для остальных — запрос.
-// Один вызов kubectl (get pvc -A -o json), нули при ошибке/нет прав.
-// Если листинг недоступен (RBAC) — ok=false, но число смонтированных томов
-// из манифестов подов всё равно отдаётся (bound = len(mounted)).
-func pvcByContext(ctx string, mounted map[string]bool) (bound, total int, boundBytes, totalBytes int64, ok bool) {
+type nsPVC struct {
+	bound, total    int
+	boundBytes      int64
+	totalBytes      int64
+	listed          bool
+}
+
+// pvcByContextNS перечисляет PVC в кластере по namespace. Для Bound берётся
+// фактически выделенная PV ёмкость (status.capacity.storage), для остальных —
+// запрос. При RBAC-отказе (listed=false) в карте остаются только смонтированные
+// в поды тома (число томов без ёмкостей).
+func pvcByContextNS(ctx string, mounted map[string]bool) map[string]nsPVC {
 	out, err := runKubectlFn("--context", ctx, "get", "pvc", "-A", "-o", "json")
 	if err != nil {
-		return len(mounted), 0, 0, 0, false
+		byNS := make(map[string]nsPVC)
+		for k := range mounted {
+			ns := "cluster"
+			if i := strings.IndexByte(k, '|'); i > 0 {
+				ns = k[:i]
+			}
+			v := byNS[ns]
+			v.bound++
+			byNS[ns] = v
+		}
+		return byNS
 	}
 	var list kubectlPVCList
 	if err := json.Unmarshal(out, &list); err != nil {
-		return len(mounted), 0, 0, 0, false
+		return nil
 	}
+	byNS := make(map[string]nsPVC)
 	for _, p := range list.Items {
-		total++
+		ns := p.Metadata.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		v := byNS[ns]
+		v.total++
+		v.listed = true
 		req := p.Spec.Resources.Requests["storage"]
 		if reqB, ok := memBytes(req); ok {
-			totalBytes += reqB
+			v.totalBytes += reqB
 		}
 		if p.Status.Phase == "Bound" {
-			bound++
+			v.bound++
 			alloc := p.Status.Capacity["storage"]
 			if alloc == "" {
 				alloc = req
 			}
 			if capB, ok := memBytes(alloc); ok {
-				boundBytes += capB
+				v.boundBytes += capB
 			}
 		}
+		byNS[ns] = v
 	}
-	return bound, total, boundBytes, totalBytes, true
+	return byNS
 }
 
-// servicesByContext возвращает число Service во всех namespace кластера.
-// Один вызов kubectl (get svc -A -o json), ноль при ошибке/нет прав.
-func servicesByContext(ctx string) int {
-	out, err := runKubectlFn("--context", ctx, "get", "svc", "-A", "-o", "json")
+// pvcByContext — агрегатная версия pvcByContextNS (сумма по всем namespace).
+func pvcByContext(ctx string, mounted map[string]bool) (bound, total int, boundBytes, totalBytes int64, ok bool) {
+	byNS := pvcByContextNS(ctx, mounted)
+	listed := false
+	for _, v := range byNS {
+		bound += v.bound
+		total += v.total
+		boundBytes += v.boundBytes
+		totalBytes += v.totalBytes
+		if v.listed {
+			listed = true
+		}
+	}
+	return bound, total, boundBytes, totalBytes, listed
+}
+
+// scByContext возвращает количество StorageClass в кластере. StorageClass —
+// cluster-scoped ресурс, поэтому число одно на весь контекст. -1 при ошибке/нет прав.
+func scByContext(ctx string) int {
+	out, err := runKubectlFn("--context", ctx, "get", "storageclass", "-o", "json")
 	if err != nil {
-		return 0
+		return -1
 	}
 	var list struct {
-		Items []struct{} `json:"items"`
+		Items []json.RawMessage `json:"items"`
 	}
-	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
-		return 0
+	if err := json.Unmarshal(out, &list); err != nil {
+		return -1
 	}
 	return len(list.Items)
+}
+
+// servicesByContextNS возвращает число Service по namespace кластера.
+// Ключ — namespace. Пустая карта при ошибке/нет прав.
+func servicesByContextNS(ctx string) map[string]int {
+	out, err := runKubectlFn("--context", ctx, "get", "svc", "-A", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
+		return nil
+	}
+	byNS := make(map[string]int)
+	for _, it := range list.Items {
+		ns := it.Metadata.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		byNS[ns]++
+	}
+	return byNS
+}
+
+// servicesByContext возвращает суммарное число Service во всех namespace.
+func servicesByContext(ctx string) int {
+	n := 0
+	for _, v := range servicesByContextNS(ctx) {
+		n += v
+	}
+	return n
+}
+
+// networksByContextNS возвращает число сетевых ресурсов кластера по namespace:
+// Service, Ingress, NetworkPolicy, Endpoints, EndpointSlice (и egress-политики,
+// если они установлены отдельными CRD).
+func networksByContextNS(ctx string) map[string]int {
+	kinds := scopeKinds("svc")
+	kinds = append(kinds, egressKinds(ctx)...)
+	byNS := make(map[string]int)
+	for ns, v := range countKubectlKindsNS(ctx, kinds) {
+		byNS[ns] += v.total
+	}
+	// egress-политики на уровне кластера не имеют namespace.
+	for ns, v := range byNS {
+		if ns == "" {
+			byNS["cluster"] += v
+			delete(byNS, ns)
+		}
+	}
+	return byNS
+}
+
+// chartsByContextNS возвращает число helm-релизов кластера по namespace.
+// Helm v3 хранит релизы как Secret с типом helm.sh/release.v1 (label owner=helm).
+func chartsByContextNS(ctx string) map[string]int {
+	out, err := runKubectlFn("--context", ctx, "get", "secrets", "-A", "-l", "owner=helm", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
+		return nil
+	}
+	byNS := make(map[string]int)
+	for _, it := range list.Items {
+		ns := it.Metadata.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		byNS[ns]++
+	}
+	return byNS
 }
 
 // kubectlEvent — событие кластера (get events -A -o json).
@@ -628,31 +896,209 @@ type kubectlEvent struct {
 	} `json:"involvedObject"`
 }
 
-// eventsByContext возвращает число событий с type=Warning во всех namespace
-// кластера. Один вызов kubectl, ноль при ошибке/нет прав.
-func eventsByContext(ctx string) int {
+// eventsByContextNS возвращает число событий с type=Warning по namespace
+// кластера. Пустая карта при ошибке/нет прав.
+func eventsByContextNS(ctx string) map[string]int {
 	out, err := runKubectlFn("--context", ctx, "get", "events", "-A", "-o", "json")
 	if err != nil {
-		return 0
+		return nil
 	}
 	var list struct {
 		Items []kubectlEvent `json:"items"`
 	}
 	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
-		return 0
+		return nil
 	}
-	var warn int
+	byNS := make(map[string]int)
 	for _, ev := range list.Items {
-		if ev.Type == "Warning" {
-			warn++
+		if ev.Type != "Warning" {
+			continue
+		}
+		ns := ev.Metadata.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		byNS[ns]++
+	}
+	return byNS
+}
+
+// eventsByContext возвращает суммарное число событий с type=Warning.
+func eventsByContext(ctx string) int {
+	n := 0
+	for _, v := range eventsByContextNS(ctx) {
+		n += v
+	}
+	return n
+}
+
+// helmReleaseName извлекает имя релиза из имени helm-Secret вида
+// sh.helm.release.v1.<release>.<revision>. Если формат не соответствует —
+// возвращается исходное имя без изменений.
+func helmReleaseName(secretName string) string {
+	const prefix = "sh.helm.release.v1."
+	if !strings.HasPrefix(secretName, prefix) {
+		return secretName
+	}
+	rest := strings.TrimPrefix(secretName, prefix)
+	if i := strings.LastIndex(rest, ".v"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}
+
+// releaseSecretForName возвращает действительное имя helm-Secret (поищем
+// префикс sh.helm.release.v1.<release>.v<rev> и выберем самую свежую ревизию).
+func releaseSecretForName(ctx, ns, release string) (string, error) {
+	prefix := "sh.helm.release.v1." + release + ".v"
+	out, err := runKubectlFn("--context", ctx, "get", "secrets", "-n", ns, "-l", "owner=helm", "-o", "json")
+	if err != nil {
+		return "", err
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
+		return "", err
+	}
+	best, bestRev := "", -1
+	for _, it := range list.Items {
+		if !strings.HasPrefix(it.Metadata.Name, prefix) {
+			continue
+		}
+		revStr := strings.TrimPrefix(it.Metadata.Name, prefix)
+		rev, _ := strconv.Atoi(revStr)
+		if rev > bestRev {
+			best, bestRev = it.Metadata.Name, rev
 		}
 	}
-	return warn
+	if best == "" {
+		return "", fmt.Errorf("helm release %q not found in namespace %s", release, ns)
+	}
+	return best, nil
+}
+
+// helmReleaseYAML декодирует содержимое helm-Secret (data.release — base64 +
+// gzip + JSON) в читаемый человеко-понятный YAML, чтобы модалка ресурса
+// показывала полезную информацию вместо ошибки "no resource type chart".
+func helmReleaseYAML(ctx, ns, release string) (string, error) {
+	secret, err := releaseSecretForName(ctx, ns, release)
+	if err != nil {
+		return "", err
+	}
+	out, err := runKubectlFn("--context", ctx, "get", "secret", secret, "-n", ns, "-o", "json")
+	if err != nil {
+		return "", err
+	}
+	var sec struct {
+		Type string `json:"type"`
+		Data struct {
+			Release string `json:"release"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(trimToJSON(out), &sec); err != nil {
+		return "", err
+	}
+	if sec.Data.Release == "" {
+		return "", fmt.Errorf("secret %s has no release data", secret)
+	}
+	raw, err := base64.StdEncoding.DecodeString(sec.Data.Release)
+	if err != nil {
+		return "", err
+	}
+	// helm v3 хранит релиз как base64(gzip(json)). kubectl в JSON секрета
+	// добавляет ещё один слой base64: разворачиваем оба.
+	if lvl := strings.TrimSpace(string(raw)); strings.HasPrefix(lvl, "H4sI") {
+		if dec, e := base64.StdEncoding.DecodeString(lvl); e == nil {
+			raw = dec
+		}
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	defer gz.Close()
+	dec, err := io.ReadAll(gz)
+	if err != nil {
+		return "", err
+	}
+	var rel map[string]interface{}
+	if err := json.Unmarshal(dec, &rel); err != nil {
+		return "", err
+	}
+	lines := []string{
+		"# kubelogs: helm release decoded from secret " + secret,
+	}
+	str := func(m map[string]interface{}, ks ...string) string {
+		for _, k := range ks {
+			if cur, ok := m[k].(map[string]interface{}); ok {
+				m = cur
+				continue
+			}
+			if v, ok := m[k].(string); ok {
+				return v
+			}
+			if v, ok := m[k].(float64); ok {
+				return strconv.FormatFloat(v, 'f', -1, 64)
+			}
+			return fmt.Sprintf("%v", m[k])
+		}
+		return ""
+	}
+	chart := map[string]interface{}{}
+	if cm, ok := rel["chart"].(map[string]interface{}); ok {
+		if mm, ok := cm["metadata"].(map[string]interface{}); ok {
+			chart = mm
+		}
+	}
+	info := map[string]interface{}{}
+	if im, ok := rel["info"].(map[string]interface{}); ok {
+		info = im
+	}
+	lines = append(lines,
+		"name: "+str(rel, "name"),
+		"namespace: "+str(rel, "namespace"),
+		"status: "+str(info, "status"),
+		"description: "+str(info, "description"),
+		"revision: "+str(rel, "version"),
+		"chart: "+str(chart, "name"),
+		"chartVersion: "+str(chart, "version"),
+		"appVersion: "+str(chart, "appVersion"),
+		"values:",
+	)
+	if cfg, ok := rel["config"].(map[string]interface{}); ok && len(cfg) > 0 {
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(cfg)
+		for _, ln := range strings.Split(strings.TrimRight(b.String(), "\n"), "\n") {
+			lines = append(lines, "  "+ln)
+		}
+	} else {
+		lines = append(lines, "  {}")
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // kubeKind — тип ресурса для агрегированных списков (карточки Jobs/Configs).
 type kubeKind struct {
 	kind, plural, cat string
+}
+
+// configsScopeKinds — конфиги + RBAC для модалки «Configs and RBAC».
+// Card-счётчик (Configs) остаётся только configmap+secret (см. scopeKinds).
+func configsScopeKinds() []kubeKind {
+	return append(scopeKinds("configs"), []kubeKind{
+		{"serviceaccount", "serviceaccounts", "RBAC"},
+		{"role", "roles", "RBAC"},
+		{"rolebinding", "rolebindings", "RBAC"},
+		{"clusterrole", "clusterroles", "RBAC"},
+		{"clusterrolebinding", "clusterrolebindings", "RBAC"},
+	}...)
 }
 
 // scopeKinds возвращает типы ресурсов, объединяемые в одну карточку-список.
@@ -682,6 +1128,12 @@ func scopeKinds(scope string) []kubeKind {
 			{"networkpolicy", "networkpolicies", "Network"},
 			{"endpoints", "endpoints", "Network"},
 			{"endpointslice", "endpointslices", "Network"},
+		}
+	case "pvc":
+		return []kubeKind{
+			{"persistentvolumeclaim", "persistentvolumeclaims", "Storage"},
+			{"persistentvolume", "persistentvolumes", "Storage"},
+			{"storageclass", "storageclasses", "Storage"},
 		}
 	}
 	return nil
@@ -722,15 +1174,25 @@ type mixedObject struct {
 		Namespace         string    `json:"namespace"`
 		CreationTimestamp time.Time `json:"creationTimestamp"`
 	} `json:"metadata"`
+	Spec struct {
+		Resources struct {
+			Requests map[string]string `json:"requests"`
+		} `json:"resources"`
+	} `json:"spec"`
 }
 
-// countKubectlKinds считает суммарное количество объектов всех указанных типов
-// во всех namespace одного кластера одним вызовом kubectl. Второе возвращаемое
-// значение — число успешно завершённых Job (status.succeeded>0 и failed=0).
-// Ноль при ошибке/нет прав.
-func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
+// nsKinds — количество объектов и успешно завершённых Job в одном namespace.
+type nsKinds struct {
+	total, done int
+}
+
+// countKubectlKindsNS считает количество объектов всех указанных типов по
+// namespace одного кластера одним вызовом kubectl. Ключ — namespace ("cluster"
+// для Cluster-scoped ресурсов). done — число успешно завершённых Job.
+// Пустая карта при ошибке/нет прав.
+func countKubectlKindsNS(ctx string, ks []kubeKind) map[string]nsKinds {
 	if len(ks) == 0 {
-		return 0, 0
+		return nil
 	}
 	plurals := make([]string, len(ks))
 	for i, k := range ks {
@@ -738,19 +1200,28 @@ func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
 	}
 	out, err := runKubectlFn("--context", ctx, "get", strings.Join(plurals, ","), "-A", "-o", "json")
 	if err != nil {
-		return 0, 0
+		return nil
 	}
 	var ml kubectlMixedAll
 	if json.Unmarshal(trimToJSON(out), &ml) != nil {
-		return 0, 0
+		return nil
 	}
-	n, done := 0, 0
+	byNS := make(map[string]nsKinds)
+	acc := func(ns, kind string, succeeded, failed int) {
+		k := byNS[ns]
+		k.total++
+		if strings.ToLower(kind) == "job" && jobSucceeded(succeeded, failed) {
+			k.done++
+		}
+		byNS[ns] = k
+	}
 	for _, raw := range ml.Items {
 		var e struct {
 			Kind     string            `json:"kind"`
 			Items    []json.RawMessage `json:"items"`
 			Metadata struct {
-				Name string `json:"name"`
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
 			} `json:"metadata"`
 			Status struct {
 				Succeeded int `json:"succeeded"`
@@ -764,19 +1235,20 @@ func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
 			// Вложенный формат: каждый под-List с собственным kind.
 			kind := strings.ToLower(strings.TrimSuffix(e.Kind, "List"))
 			for _, iraw := range e.Items {
-				n++
-				if kind != "job" {
-					continue
-				}
 				var it struct {
+					Metadata struct {
+						Namespace string `json:"namespace"`
+					} `json:"metadata"`
 					Status struct {
 						Succeeded int `json:"succeeded"`
 						Failed    int `json:"failed"`
 					} `json:"status"`
 				}
-				if json.Unmarshal(iraw, &it) == nil && jobSucceeded(it.Status.Succeeded, it.Status.Failed) {
-					done++
+				ns := ""
+				if json.Unmarshal(iraw, &it) == nil {
+					ns = it.Metadata.Namespace
 				}
+				acc(ns, kind, it.Status.Succeeded, it.Status.Failed)
 			}
 			continue
 		}
@@ -784,10 +1256,18 @@ func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
 			continue
 		}
 		// Плоский формат: объект с собственным kind.
-		n++
-		if strings.ToLower(e.Kind) == "job" && jobSucceeded(e.Status.Succeeded, e.Status.Failed) {
-			done++
-		}
+		acc(e.Metadata.Namespace, e.Kind, e.Status.Succeeded, e.Status.Failed)
+	}
+	return byNS
+}
+
+// countKubectlKinds — суммарное количество всех указанных типов во всех
+// namespace кластера (агрегат по countKubectlKindsNS).
+func countKubectlKinds(ctx string, ks []kubeKind) (int, int) {
+	n, done := 0, 0
+	for _, v := range countKubectlKindsNS(ctx, ks) {
+		n += v.total
+		done += v.done
 	}
 	return n, done
 }
@@ -958,7 +1438,7 @@ func resPart(req, lim, use string, parseF func(string) (int64, bool)) string {
 		base, label = req, req
 	}
 	if p, ok := usagePct(use, base, parseF); ok {
-		return fmt.Sprintf("%s/%s (%d%%)", use, orDash(label), p)
+		return fmt.Sprintf("%d%% (%s/%s)", p, use, orDash(label))
 	}
 	return bare
 }
@@ -1117,7 +1597,7 @@ func phaseBadge(phase string) string {
 
 func stateBadge(state string) string {
 	switch {
-	case state == "Running", state == "Succeeded":
+	case state == "Running", state == "Succeeded", state == "Terminated:Completed":
 		return "ok"
 	case strings.HasPrefix(state, "Waiting"), state == "Pending":
 		return "warn"
@@ -1190,7 +1670,7 @@ func gibFrac(use, total int64) string {
 	return fmt.Sprintf("%.2f / %.2f", float64(use)/(1<<30), float64(total)/(1<<30))
 }
 
-// pvPvcValue формирует значение карточки PV/PVC. Если листинг PVC доступен —
+// pvPvcValue формирует значение карточки PVC/PV/SC. Если листинг PVC доступен —
 // «Bound / total», иначе только число томов из манифестов подов
 // (что реально видно при RBAC-отказе).
 func pvPvcValue(st Stats) string {
@@ -1202,20 +1682,21 @@ func pvPvcValue(st Stats) string {
 
 func buildCards(st Stats) []Card {
 	return []Card{
-		{Label: "Clusters", Value: frac(st.AvailCtx, st.Contexts), Hint: "available / total clusters", Color: "accent", Scope: "ctx"},
+		{Label: "Clusters", Value: frac(st.AvailCtx, st.Contexts), Hint: "available / total clusters", Color: "violet", Scope: "ctx"},
 		{Label: "Namespaces", Value: strconv.Itoa(st.Namespaces), Hint: "namespaces across clusters", Color: "violet", Scope: "ns"},
-		{Label: "Nodes", Value: frac(st.NodeReady, st.NodeTotal), Hint: "ready / total nodes", Color: "blue", Scope: "nodes"},
-		{Label: "Pods", Value: frac(st.PodsRunning, st.Pods), Hint: "running / total pods", Color: "teal", Scope: "pods"},
+		{Label: "Nodes", Value: frac(st.NodeReady, st.NodeTotal), Hint: "ready / total nodes", Color: "violet", Scope: "nodes"},
+		{Label: "Pods", Value: frac(st.PodsRunning, st.Pods), Hint: "running / total pods", Color: "ok", Scope: "pods"},
 		{Label: "Containers", Value: frac(st.Running, st.Containers), Hint: "running / active containers (excl. finished jobs)", Color: "ok", Scope: "workloads"},
-		{Label: "Jobs", Value: frac(st.JobsDone, st.Jobs), Hint: "succeeded jobs / total (jobs + cronjobs)", Color: "blue", Scope: "jobs"},
-		{Label: "Services", Value: strconv.Itoa(st.Services), Hint: "services across clusters", Color: "amber", Scope: "svc"},
-		{Label: "Configs", Value: strconv.Itoa(st.Configs), Hint: "configmaps + secrets across clusters", Color: "violet", Scope: "configs"},
-		{Label: "Events", Value: strconv.Itoa(st.EventsWarning), Hint: "events with type=Warning across clusters", Color: "redSoft", Scope: "events"},
-		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "amber"},
-		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "redSoft"},
-		{Label: "HARD LIMITS", Value: fmt.Sprintf("%.2f / %.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB", Color: "violet"},
-		{Label: "PVC size", Value: gibFrac(st.PVCBoundBytes, st.PVCTotalBytes) + " GiB", Hint: "capacity allocated to PV / total PVC requested", Color: "ok", Scope: "pvc"},
-		{Label: "PV/PVC", Value: pvPvcValue(st), Hint: "bound PV / total PVC", Color: "teal", Scope: "pvc"},
+		{Label: "Jobs", Value: frac(st.JobsDone, st.Jobs), Hint: "succeeded jobs / total (jobs + cronjobs)", Color: "ok", Scope: "jobs"},
+		{Label: "Charts", Value: strconv.Itoa(st.Charts), Hint: "helm releases across clusters", Color: "blue", Scope: "charts"},
+		{Label: "Service", Value: strconv.Itoa(st.Services), Hint: "services across clusters (click for full list including Ingress, NetworkPolicy, Endpoints)", Color: "blue", Scope: "svc"},
+		{Label: "Configs", Value: strconv.Itoa(st.Configs), Hint: "configmaps + secrets across clusters", Color: "blue", Scope: "configs"},
+		{Label: "Events", Value: strconv.Itoa(st.EventsWarning), Hint: "events with type=Warning across clusters", Color: "amber", Scope: "events"},
+		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "teal"},
+		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "teal"},
+		{Label: "Limits", Value: fmt.Sprintf("%.2f / %.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB (click to list manifests)", Color: "amber", Scope: "limits"},
+		{Label: "PVC size", Value: gibFrac(st.PVCBoundBytes, st.PVCTotalBytes) + " GiB", Hint: "capacity allocated to PV / total PVC requested", Color: "sky", Scope: "pvc"},
+		{Label: "PVC/PV Count", Value: pvPvcValue(st), Hint: "bound PVC / total PVC (PV, PersistentVolumeClaim, StorageClass)", Color: "sky", Scope: "pvc"},
 	}
 }
 
@@ -1257,6 +1738,21 @@ func uniquePhases(pods []Pod) []string {
 	out := make([]string, 0, len(set))
 	for ph := range set {
 		out = append(out, ph)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func uniqueStates(pods []Pod) []string {
+	set := make(map[string]struct{})
+	for _, p := range pods {
+		if p.State != "" {
+			set[p.State] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for st := range set {
+		out = append(out, st)
 	}
 	sort.Strings(out)
 	return out
@@ -1598,18 +2094,30 @@ func gatherData() PageData {
 	st.PVCBoundBytes = ov.PVCBoundBytes
 	st.PVCTotalBytes = ov.PVCTotalBytes
 	st.PVCOk = ov.PVCOk
+	st.StorageClasses = ov.StorageClasses
+	st.Networks = ov.Networks
 	st.Services = ov.Services
 	st.Jobs = ov.Jobs
 	st.JobsDone = ov.JobsDone
 	st.Configs = ov.Configs
+	st.Charts = ov.Charts
 	st.EventsWarning = ov.EventsWarning
+	nsJSON := template.JS("{}")
+	if ov.NS != nil {
+		if b, err := json.Marshal(ov.NS); err == nil {
+			nsJSON = template.JS(b)
+		}
+	}
 	return PageData{
 		Pods:       pods,
 		Contexts:   ctxs,
 		Namespaces: uniqueNamespaces(pods),
 		Nodes:      uniqueNodes(pods),
 		Phases:     uniquePhases(pods),
+		States:     uniqueStates(pods),
 		Stats:      st,
+		NS:         ov.NS,
+		NSJSON:     nsJSON,
 		Cards:      buildCards(st),
 		Count:      len(pods),
 		Generated:  time.Now(),
@@ -1997,15 +2505,13 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		for _, c := range ctxs {
 			add(ObjRef{Kind: "cluster", Name: c, Cat: "Cluster", Ctx: c})
 		}
-	case "ns", "nodes", "pvc":
+	case "ns", "nodes":
 		var kind, plural, cat string
 		switch scope {
 		case "ns":
 			kind, plural, cat = "namespace", "namespaces", "Cluster"
 		case "nodes":
 			kind, plural, cat = "node", "nodes", "Cluster"
-		case "pvc":
-			kind, plural, cat = "persistentvolumeclaim", "persistentvolumeclaims", "Storage"
 		}
 		for _, c := range ctxs {
 			wg.Add(1)
@@ -2025,12 +2531,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 						Ctx: c, Ns: it.Metadata.Namespace,
 						Age: ageTime(it.Metadata.CreationTimestamp),
 					}
-					switch scope {
-					case "pvc":
-						if capB, ok := memBytes(it.Spec.Resources.Requests["storage"]); ok {
-							ref.Reason = fmt.Sprintf("%.2f GiB", float64(capB)/(1<<30))
-						}
-					case "nodes":
+					if scope == "nodes" {
 						ref.Ns = ""
 						ref.Reason = "not ready"
 						for _, cd := range it.Status.Conditions {
@@ -2038,7 +2539,7 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 								ref.Reason = "ready"
 							}
 						}
-					case "ns":
+					} else {
 						ref.Reason = it.Status.Phase
 					}
 					add(ref)
@@ -2074,12 +2575,15 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 				}
 			}(c)
 		}
-	case "jobs", "configs", "workloads", "svc":
+	case "jobs", "configs", "workloads", "svc", "pvc":
 		for _, c := range ctxs {
 			wg.Add(1)
 			go func(c string) {
 				defer wg.Done()
 				kinds := scopeKinds(scope)
+				if scope == "configs" {
+					kinds = configsScopeKinds()
+				}
 				if scope == "svc" {
 					kinds = append(kinds, egressKinds(c)...)
 				}
@@ -2110,11 +2614,17 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 							continue
 						}
 						for _, it := range mo.Items {
-							add(ObjRef{
+							ref := ObjRef{
 								Kind: singular, Name: it.Metadata.Name, Cat: objCat(singular),
 								Ctx: c, Ns: it.Metadata.Namespace,
 								Age: ageTime(it.Metadata.CreationTimestamp),
-							})
+							}
+							if scope == "pvc" && singular == "persistentvolumeclaim" {
+								if capB, ok := memBytes(it.Spec.Resources.Requests["storage"]); ok {
+									ref.Reason = fmt.Sprintf("%.2f GiB", float64(capB)/(1<<30))
+								}
+							}
+							add(ref)
 						}
 						continue
 					}
@@ -2123,11 +2633,51 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					singular := strings.ToLower(mo.Kind)
-					add(ObjRef{
+					ref := ObjRef{
 						Kind: singular, Name: mo.Metadata.Name, Cat: objCat(singular),
 						Ctx: c, Ns: mo.Metadata.Namespace,
 						Age: ageTime(mo.Metadata.CreationTimestamp),
-					})
+					}
+					if scope == "pvc" && singular == "persistentvolumeclaim" {
+						if capB, ok := memBytes(mo.Spec.Resources.Requests["storage"]); ok {
+							ref.Reason = fmt.Sprintf("%.2f GiB", float64(capB)/(1<<30))
+						}
+					}
+					add(ref)
+				}
+			}(c)
+		}
+	case "charts":
+		// Helm-релизы хранятся в виде Secret с label owner=helm.
+		for _, c := range ctxs {
+			wg.Add(1)
+			go func(c string) {
+				defer wg.Done()
+				out, e := runKubectlFn("--context", c, "get", "secrets", "-A", "-l", "owner=helm", "-o", "json")
+				if e != nil {
+					return // RBAC/нет прав — пропускаем, показываем доступное
+				}
+				var list struct {
+					Items []struct {
+						Metadata struct {
+							Name              string    `json:"name"`
+							Namespace         string    `json:"namespace"`
+							CreationTimestamp time.Time `json:"creationTimestamp"`
+						} `json:"metadata"`
+					} `json:"items"`
+				}
+				if json.Unmarshal(trimToJSON(out), &list) != nil {
+					return
+				}
+				for _, it := range list.Items {
+					ref := ObjRef{
+						Kind: "chart", Name: helmReleaseName(it.Metadata.Name), Cat: "Chart",
+						Ctx: c, Ns: it.Metadata.Namespace,
+						Age: ageTime(it.Metadata.CreationTimestamp),
+					}
+					mu.Lock()
+					refs = append(refs, ref)
+					mu.Unlock()
 				}
 			}(c)
 		}
@@ -2560,6 +3110,18 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 	}
 	if kind == "cluster" {
 		y, e := clusterSnippetYAML(ctx)
+		if e != nil {
+			resp.Error = e.Error()
+		} else {
+			resp.Yaml = y
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+	if kind == "chart" {
+		// Helm-релизы не являются ресурсом K8s («chart» не существует как тип).
+		// Показываем содержимое helm-Secret: имя, версия, values, статус.
+		y, e := helmReleaseYAML(ctx, ns, name)
 		if e != nil {
 			resp.Error = e.Error()
 		} else {
