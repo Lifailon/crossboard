@@ -89,6 +89,7 @@ type Stats struct {
 	PVCTotal      int
 	PVCBoundBytes int64
 	PVCTotalBytes int64
+	PVTotalBytes  int64 // суммарная ёмкость всех PV во всех кластерах, байты
 	PVCOk         int
 	StorageClasses int // объекты StorageClass во всех кластерах (cluster-scoped)
 	EventsWarning int // события type=Warning во всех кластерах
@@ -107,9 +108,10 @@ type NSStats struct {
 	EventsWarning int
 	PVCBound      int
 	PVCTotal      int
-	PVCBoundBytes int64
+PVCBoundBytes int64
 	PVCTotalBytes int64
-	PVCOk         int // 1, если в этом ctx листинг PVC реально удался
+	PVTotalBytes  int64 // суммарная ёмкость всех PV в кластере, байты (кладётся на "ctx|cluster")
+	PVCOk         int    // 1, если в этом ctx листинг PVC реально удался
 	StorageClasses int // StorageClass (cluster-scoped): кладётся на ключ "ctx|cluster"
 	NodeReady     int
 	NodeTotal     int
@@ -361,6 +363,7 @@ type Overview struct {
 	PVCTotal      int   // всего PVC
 	PVCBoundBytes int64 // сумма ёмкости, выделенной PV из Bound PVC, байты
 	PVCTotalBytes int64 // суммарная запрошенная ёмкость всех PVC, байты
+	PVTotalBytes  int64 // суммарная ёмкость всех PV, байты
 	PVCOk         int   // контексты, где листинг PVC завершился успешно
 	StorageClasses int  // суммарное число StorageClass по кластерам
 	Networks      int   // суммарное число сетевых ресурсов (Service/Ingress/NetworkPolicy/Endpoints/EndpointSlice)
@@ -488,6 +491,7 @@ func fetchAllReal() Overview {
 			}
 			pvcNS := pvcByContextNS(ctx, mounted)
 			scNS := scByContext(ctx)
+			pvCap := pvCapacityByContext(ctx)
 			netNS := networksByContextNS(ctx)
 			svcNS := servicesByContextNS(ctx)
 			chartNS := chartsByContextNS(ctx)
@@ -523,6 +527,9 @@ func fetchAllReal() Overview {
 			}
 			if scNS >= 0 {
 				addNS("", func(s *NSStats) { s.StorageClasses += scNS })
+			}
+			if pvCap > 0 {
+				addNS("", func(s *NSStats) { s.PVTotalBytes += pvCap })
 			}
 			for ns, v := range netNS {
 				addNS(ns, func(s *NSStats) { s.Networks += v })
@@ -562,6 +569,7 @@ func fetchAllReal() Overview {
 			if scNS >= 0 {
 				ov.StorageClasses += scNS
 			}
+			ov.PVTotalBytes += pvCap
 			for _, v := range netNS {
 				ov.Networks += v
 			}
@@ -599,6 +607,7 @@ func fetchAllReal() Overview {
 				cur.PVCTotal += v.PVCTotal
 				cur.PVCBoundBytes += v.PVCBoundBytes
 				cur.PVCTotalBytes += v.PVCTotalBytes
+				cur.PVTotalBytes += v.PVTotalBytes
 				if v.PVCOk != 0 {
 					cur.PVCOk = 1
 				}
@@ -777,6 +786,44 @@ func pvcByContext(ctx string, mounted map[string]bool) (bound, total int, boundB
 		}
 	}
 	return bound, total, boundBytes, totalBytes, listed
+}
+
+// kubectlPVList — PV с дисковым volume (spec.capacity.storage) и выделенной
+// ёмкостью (status.capacity.storage).
+type kubectlPVList struct {
+	Items []struct {
+		Spec struct {
+			Capacity map[string]string `json:"capacity"`
+		} `json:"spec"`
+		Status struct {
+			Capacity map[string]string `json:"capacity"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// pvCapacityByContext возвращает суммарную ёмкость всех PV в кластере в байтах.
+// PV — cluster-scoped ресурс, поэтому значение одно на весь контекст.
+// 0 при ошибке / нет прав.
+func pvCapacityByContext(ctx string) int64 {
+	out, err := runKubectlFn("--context", ctx, "get", "pv", "-o", "json")
+	if err != nil {
+		return 0
+	}
+	var list kubectlPVList
+	if err := json.Unmarshal(trimToJSON(out), &list); err != nil {
+		return 0
+	}
+	var sum int64
+	for _, p := range list.Items {
+		capStr := p.Status.Capacity["storage"]
+		if capStr == "" {
+			capStr = p.Spec.Capacity["storage"]
+		}
+		if b, ok := memBytes(capStr); ok {
+			sum += b
+		}
+	}
+	return sum
 }
 
 // scByContext возвращает количество StorageClass в кластере. StorageClass —
@@ -1663,11 +1710,11 @@ func frac(a, b int) string {
 }
 
 func coresFrac(use, total int64) string {
-	return fmt.Sprintf("%.2f / %.2f", float64(use)/1000, float64(total)/1000)
+	return fmt.Sprintf("%.2f/%.2f", float64(use)/1000, float64(total)/1000)
 }
 
 func gibFrac(use, total int64) string {
-	return fmt.Sprintf("%.2f / %.2f", float64(use)/(1<<30), float64(total)/(1<<30))
+	return fmt.Sprintf("%.2f/%.2f", float64(use)/(1<<30), float64(total)/(1<<30))
 }
 
 // pvPvcValue формирует значение карточки PVC/PV/SC. Если листинг PVC доступен —
@@ -1694,8 +1741,8 @@ func buildCards(st Stats) []Card {
 		{Label: "Events", Value: strconv.Itoa(st.EventsWarning), Hint: "events with type=Warning across clusters", Color: "amber", Scope: "events"},
 		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "teal"},
 		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "teal"},
-		{Label: "Limits", Value: fmt.Sprintf("%.2f / %.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB (click to list manifests)", Color: "amber", Scope: "limits"},
-		{Label: "PVC size", Value: gibFrac(st.PVCBoundBytes, st.PVCTotalBytes) + " GiB", Hint: "capacity allocated to PV / total PVC requested", Color: "sky", Scope: "pvc"},
+		{Label: "Limits", Value: fmt.Sprintf("%.2f/%.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB (click to list manifests)", Color: "amber", Scope: "limits"},
+		{Label: "PVC/PV size", Value: gibFrac(st.PVCTotalBytes, st.PVTotalBytes) + " GiB", Hint: "sum of PVC requests / total PV capacity", Color: "sky", Scope: "pvc"},
 		{Label: "PVC/PV Count", Value: pvPvcValue(st), Hint: "bound PVC / total PVC (PV, PersistentVolumeClaim, StorageClass)", Color: "sky", Scope: "pvc"},
 	}
 }
@@ -2093,6 +2140,7 @@ func gatherData() PageData {
 	st.PVCTotal = ov.PVCTotal
 	st.PVCBoundBytes = ov.PVCBoundBytes
 	st.PVCTotalBytes = ov.PVCTotalBytes
+	st.PVTotalBytes = ov.PVTotalBytes
 	st.PVCOk = ov.PVCOk
 	st.StorageClasses = ov.StorageClasses
 	st.Networks = ov.Networks

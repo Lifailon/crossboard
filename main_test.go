@@ -383,13 +383,13 @@ func TestBuildCards(t *testing.T) {
 		CpuMilli: 1200, CpuTotalMilli: 4000,
 		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
 		CpuLimitMilli: 1200, MemLimitBytes: 2 << 30,
-		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVCOk: 1,
+		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVTotalBytes: 4 << 30, PVCOk: 1,
 	})
 	if len(cards) != 15 {
 		t.Fatalf("len(cards) = %d, want 15", len(cards))
 	}
 	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Charts", "Service", "Configs", "Events"}
-	row2 := []string{"CPU", "Memory", "Limits", "PVC size", "PVC/PV Count"}
+	row2 := []string{"CPU", "Memory", "Limits", "PVC/PV size", "PVC/PV Count"}
 	for i, l := range append(row1, row2...) {
 		if cards[i].Label != l {
 			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
@@ -416,16 +416,16 @@ func TestBuildCards(t *testing.T) {
 	if cards[9].Label != "Events" || cards[9].Value != "0" {
 		t.Errorf("events card: %+v", cards[9])
 	}
-	if cards[10].Value != "1.20 / 4.00" || cards[10].Scope != "" {
+	if cards[10].Value != "1.20/4.00" || cards[10].Scope != "" {
 		t.Errorf("cpu card: %+v", cards[10])
 	}
-	if cards[11].Value != "2.00 / 4.00 GiB" || cards[11].Scope != "" {
+	if cards[11].Value != "2.00/4.00 GiB" || cards[11].Scope != "" {
 		t.Errorf("memory card: %+v", cards[11])
 	}
-	if cards[12].Label != "Limits" || cards[12].Value != "1.20 / 2.00 GiB" || cards[12].Scope != "limits" {
+	if cards[12].Label != "Limits" || cards[12].Value != "1.20/2.00 GiB" || cards[12].Scope != "limits" {
 		t.Errorf("limits card: %+v", cards[12])
 	}
-	if cards[13].Value != "1.00 / 2.00 GiB" || cards[13].Label != "PVC size" {
+	if cards[13].Value != "2.00/4.00 GiB" || cards[13].Label != "PVC/PV size" {
 		t.Errorf("pvc size card: %+v", cards[13])
 	}
 	if cards[14].Value != "2/5" || cards[14].Label != "PVC/PV Count" || cards[14].Scope != "pvc" {
