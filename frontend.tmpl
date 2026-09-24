@@ -274,6 +274,33 @@
         --cc: var(--sky);
       }
 
+      /* Плавающая подсказка с полным названием scope: ширина не больше самой
+         карточки и не больше окна, чтобы название не выходило за её пределы. */
+      .cardTip {
+        position: fixed;
+        z-index: 45;
+        max-width: calc(100vw - 16px);
+        padding: 10px 12px;
+        border: 1px solid var(--cc, var(--line2));
+        border-radius: 12px;
+        background: linear-gradient(180deg, var(--panel), var(--panel2));
+        color: var(--cc, var(--text));
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.35;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(4px);
+        transition:
+          opacity 0.12s ease,
+          transform 0.12s ease;
+      }
+      .cardTip.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
       /* ---------- toolbar ---------- */
       .toolbar {
         max-width: 1600px;
@@ -1111,6 +1138,15 @@
         width: 100%;
         min-width: 1200px;
       }
+      /* В режиме Word-wrap столбец OBJECT раскладывает namespace/kind/name
+         по строкам, каждая часть на своей строке. */
+      #eventsModal .table-scroll td.name.obj-wrap {
+        white-space: normal;
+      }
+      #eventsModal .table-scroll td.name.obj-wrap .obj-part {
+        display: block;
+        white-space: nowrap;
+      }
       .log-body {
         flex: 1;
         overflow-y: auto;
@@ -1298,19 +1334,17 @@
     <header>
       <div class="logo">CB</div>
       <h1>CrossBoard</h1>
-      {{if .AuthRequired}}
-      <span class="updated">Authorization required</span>
-      {{else}}
+      {{if not .AuthRequired}}
       <span class="updated" id="updated"
         >{{.Generated.Format "2006-01-02 15:04:05"}}</span
       >
       {{end}}
       <div class="auto">
         {{if not .AuthRequired}}
-        <button id="autoBtn" title="Toggle automatic table refresh">
+        <button id="autoBtn">
           Update
         </button>
-        <select id="autoInt" title="Refresh interval">
+        <select id="autoInt">
           <option value="10" selected>10s</option>
           <option value="20">20s</option>
           <option value="30">30s</option>
@@ -1355,7 +1389,6 @@
       {{range $i,$c := .Cards}}{{if lt $i 10}}
       <div
         class="card {{.Color}}"
-        title="{{.Hint}}"
         {{if
         .Scope}}
         data-scope="{{.Scope}}"
@@ -1370,7 +1403,6 @@
       {{range $i,$c := .Cards}}{{if ge $i 10}}
       <div
         class="card {{.Color}}"
-        title="{{.Hint}}"
         {{if
         .Scope}}
         data-scope="{{.Scope}}"
@@ -1426,7 +1458,7 @@
         {{end}}
       </select>
       <div class="actions">
-        <button id="btnClear" title="Clear all selections">Clear</button>
+        <button id="btnClear">Clear</button>
         <button class="primary" id="btnOpen">Show logs</button>
       </div>
     </section>
@@ -1441,7 +1473,6 @@
                   <input
                     type="checkbox"
                     id="selectAll"
-                    title="Select all visible"
                   />
                 </th>
                 <th data-key="ctx">Cluster</th>
@@ -1487,7 +1518,7 @@
                 <td class="ns">{{.Namespace}}</td>
                 <td class="pod">{{.Name}}</td>
                 <td class="cont">{{.Container}}</td>
-                <td class="created" title="created {{.Created}}">{{.Age}}</td>
+                <td class="created">{{.Age}}</td>
                 <td><span class="badge {{.PhaseCss}}">{{.Phase}}</span></td>
                 <td><span class="badge {{.StateCss}}">{{.State}}</span></td>
                 <td>
@@ -1503,13 +1534,11 @@
                 </td>
                 <td
                   class="cpu hide-sm hide-md"
-                  title="CPU usage/limit, % of limit"
                 >
                   {{.Cpu}}
                 </td>
                 <td
                   class="mem hide-sm hide-md"
-                  title="Memory usage/limit, % of limit"
                 >
                   {{.Mem}}
                 </td>
@@ -1547,7 +1576,6 @@
               <div
                 class="seg"
                 id="modeSeg"
-                title="Match mode (mutually exclusive): Plain = exact substring, AND = all words, OR = any word, Regex"
               >
                 <label class="seg-btn"
                   ><input
@@ -1574,7 +1602,7 @@
                 >
                 <span class="seg-thumb"></span>
               </div>
-              <label class="sw" title="Ignore case (insensitive)">
+              <label class="sw">
                 <input type="checkbox" id="insensChk" checked /><span
                   class="trk"
                 ></span
@@ -1582,21 +1610,19 @@
               </label>
               <label
                 class="sw"
-                title="Show 1 line before/after each match (grep -A 1 -B 1)"
               >
                 <input type="checkbox" id="ctxChk" /><span class="trk"></span
                 >Context
               </label>
               <label
                 class="sw"
-                title="Wrap long lines (off = horizontal scroll)"
               >
                 <input type="checkbox" id="wrapChk" checked /><span
                   class="trk"
                 ></span
                 >Word-wrap
               </label>
-              <label class="sw" title="Show built-in kubectl timestamps">
+              <label class="sw">
                 <input type="checkbox" id="tsChk" checked /><span
                   class="trk"
                 ></span
@@ -1604,29 +1630,26 @@
               </label>
             </div>
             <div class="mt-row" id="toolsModes">
-              <button id="followChk" class="tgl on" title="Follow new lines">
+              <button id="followChk" class="tgl on">
                 Follow
               </button>
               <button
                 id="btnPause"
                 class="tgl"
-                title="Pause / resume the stream"
               >
                 Pause
               </button>
               <button
                 id="autoScroll"
                 class="tgl on"
-                title="Auto scroll to the newest line"
               >
                 Scroll
               </button>
-              <button id="btnClear">Clear</button>
+              <button id="btnClearLogs">Clear</button>
               <button id="btnDownload">Download</button>
               <select
                 id="sinceSel"
                 class="sel"
-                title="Time window: how far back to load log history"
               >
                 <option value="">Age: all</option>
                 <option value="1h">1h</option>
@@ -1641,7 +1664,6 @@
               <select
                 id="linesSel"
                 class="sel"
-                title="Number of recent lines to load (All = live only, no history)"
               >
                 <option value="0" selected>History: no</option>
                 <option value="100">100</option>
@@ -1656,7 +1678,7 @@
               <span class="count" id="lineCount">0</span>
             </div>
           </div>
-          <button id="btnClose" class="modal-close" title="Close">
+          <button id="btnClose" class="modal-close">
             &#10005;
           </button>
         </header>
@@ -1672,7 +1694,7 @@
       <div class="modal-window">
         <header class="modal-head">
           <h2>Resources <span id="specTitle"></span></h2>
-          <button id="btnSpecClose" class="modal-close" title="Close">
+          <button id="btnSpecClose" class="modal-close">
             &#10005;
           </button>
         </header>
@@ -1702,11 +1724,13 @@
       </div>
     </div>
 
+    <div id="cardTip" class="cardTip hidden"></div>
+
     <div id="eventsModal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-window">
         <header class="modal-head">
           <h2>Resources <span>Events</span></h2>
-          <button id="btnEvClose" class="modal-close" title="Close">
+          <button id="btnEvClose" class="modal-close">
             &#10005;
           </button>
         </header>
@@ -1718,13 +1742,18 @@
               placeholder="Filter by event messages"
               autocomplete="off"
             />
-            <select id="evCtx" title="Filter by cluster">
+            <button
+              id="evPause"
+              class="tgl"
+            >
+              Pause
+            </button>
+            <select id="evCtx">
               <option value="">Cluster: all</option>
             </select>
             <div
               class="seg"
               id="evTypeSeg"
-              title="Filter by event type (mutually exclusive): All, Normal, Warning"
             >
               <label class="seg-btn"
                 ><input type="radio" name="evType" value="" checked /><span
@@ -1743,7 +1772,7 @@
               >
               <span class="seg-thumb"></span>
             </div>
-            <label class="sw" title="Wrap long messages">
+            <label class="sw">
               <input type="checkbox" id="evWrap" checked /><span
                 class="trk"
               ></span
@@ -1931,13 +1960,14 @@
           // Все кластеры: полная сводка.
           keys = allNSCount(nsData);
         }
-        var jobs = 0, jobsDone = 0, net = 0, cfg = 0, ev = 0, charts = 0;
+        var jobs = 0, jobsDone = 0, net = 0, cfgMap = 0, cfgSec = 0, ev = 0, charts = 0;
         var pvcBound = 0, pvcTotal = 0, pvcTotalBytes = 0, pvcOk = 0;
         for (var k in keys) {
           var s = nsData[k];
           if (!s) continue;
           jobs += s.Jobs; jobsDone += s.JobsDone;
-          net += s.Services; cfg += s.Configs; ev += s.EventsWarning; charts += s.Charts;
+          net += s.Services; cfgMap += (s.ConfigMaps || 0); cfgSec += (s.Secrets || 0);
+          ev += s.EventsWarning; charts += s.Charts;
           pvcBound += s.PVCBound; pvcTotal += s.PVCTotal;
           pvcTotalBytes += s.PVCTotalBytes;
           if (s.PVCOk) pvcOk = 1;
@@ -1964,22 +1994,13 @@
           if (cn.PVTotalBytes) pvTotalBytes += cn.PVTotalBytes;
         }
         setCardValue("Jobs", fracTxt(jobsDone, jobs));
-        setCardValue("Service", String(net));
-        setCardValue("Configs", String(cfg));
+        setCardValue("Services", String(net));
+        setCardValue("Configs", cfgMap + "/" + cfgSec);
         setCardValue("Charts", String(charts));
         setCardValue("Events", String(ev));
         setCardValue("PVC/PV size", fmtGiB(pvcTotalBytes) + "/" + fmtGiB(pvTotalBytes) + " GiB");
         setCardValue("PVC/PV Count", pvcOk > 0 ? fracTxt(pvcBound, pvcTotal) : String(pvcBound));
         setCardValue("Nodes", nodeOk > 0 ? fracTxt(nodeReady, nodeTotal) : String(nodeReady));
-        var scoped = !!(fNode.value || fCtx.value || fNs.value);
-        var tl = scoped ? ", for selected cluster/node/namespace" : " across clusters";
-        setCardHint("Jobs", "succeeded jobs / total (jobs + cronjobs)" + tl);
-        setCardHint("Service", "services across clusters" + tl);
-        setCardHint("Configs", "configmaps + secrets (list includes RBAC)" + tl);
-        setCardHint("Charts", "helm releases" + tl);
-        setCardHint("Events", "events with type=Warning" + tl);
-        setCardHint("PVC/PV size", "sum of PVC requests / total PV capacity" + tl);
-        setCardHint("PVC/PV Count", "bound PVC / total PVC (PV, PersistentVolumeClaim, StorageClass)" + tl);
       }
 
       function nsKeysForCtx(nsData, ctx) {
@@ -2030,22 +2051,6 @@
           }
         }
         return null;
-      }
-
-      function setCardHint(label, hint) {
-        var hosts = [document.getElementById("cards"), document.getElementById("cards2")];
-        for (var i = 0; i < hosts.length; i++) {
-          var h = hosts[i];
-          if (!h) continue;
-          var cards = h.querySelectorAll(".card");
-          for (var j = 0; j < cards.length; j++) {
-            var l = cards[j].querySelector(".label");
-            if (l && l.textContent === label) {
-              cards[j].title = hint;
-              return;
-            }
-          }
-        }
       }
 
       function fracTxt(a, b) {
@@ -2200,11 +2205,37 @@
       /* ---------- auto refresh ---------- */
       var autoTimer = null;
       var autoOn = false;
+      var refreshTick = null;
+
+      // Любое открытое модальное окно: лога #modal, ресурсы #specModal или
+      // события #eventsModal. Пока оно открыто, фоновый сбор /api/pods спит.
+      // evModal объявлен var ниже по коду (хоистинг = undefined), поэтому guard.
+      function anyModalOpen() {
+        return !modal.classList.contains("hidden") ||
+               !specModal.classList.contains("hidden") ||
+               (evModal && !evModal.classList.contains("hidden"));
+      }
 
       function doRefresh() {
-        fetch("/api/pods").then(function (r) { return r.json(); })
+        if (autoOn && anyModalOpen()) return;
+        // ?refresh=1 заставляет сервер обойти кеш данных, иначе при равных
+        // интервале (10s) и TTL запрос попадал бы в «свежий» кеш — и видимое
+        // обновление (#updated) происходило бы раз в ~20 секунд.
+        fetch("/api/pods?refresh=1").then(function (r) { return r.json(); })
           .then(renderAll)
           .catch(function (err) { console.error(err); });
+      }
+
+      // scheduleRefresh — «отложенное» возобновление сбора сразу после того, как
+      // модальное окно действительно закрыто (срабатывает после завершения
+      // обработчика закрытия — кнопка/Esc/клик по фону). Guard от накопления
+      // дублей, если закрылись несколько окон подряд.
+      function scheduleRefresh() {
+        if (refreshTick) return;
+        refreshTick = setTimeout(function () {
+          refreshTick = null;
+          if (autoOn && !anyModalOpen()) doRefresh();
+        }, 0);
       }
 
       function setAuto(on) {
@@ -2232,12 +2263,78 @@
         cards.forEach(function (cd) {
           var div = document.createElement("div");
           div.className = "card " + cd.color;
-          div.title = cd.hint;
           if (cd.scope) div.dataset.scope = cd.scope;
           div.innerHTML = "<div class='label'></div><div class='value'></div>";
           div.querySelector(".label").textContent = cd.label;
           div.querySelector(".value").textContent = cd.value;
           host.appendChild(div);
+        });
+      }
+
+      /* ---------- подсказка с полным названием scope на карточке ---------- */
+      var cardTip = $("#cardTip");
+      var tipCard = null;
+
+      // decorateCards — проставляет полное название scope в data-title,
+      // чтобы показывать его при наведении (карточки перерисовываются).
+      function decorateCards(host) {
+        host.querySelectorAll(".card[data-scope]").forEach(function (c) {
+          if (!c.dataset.title) c.dataset.title = cardTitle(c.dataset.scope);
+        });
+      }
+
+      function hideCardTip() {
+        tipCard = null;
+        cardTip.classList.remove("show");
+        cardTip.classList.add("hidden");
+      }
+
+      // Ширина подсказки = ровно столько, чтобы влезть, но не больше самой
+      // карточки и не больше окна — название не выходит за её пределы.
+      function showCardTip(card) {
+        var title = card.dataset.title || cardTitle(card.dataset.scope);
+        if (!title) return;
+        tipCard = card;
+        var cc = window.getComputedStyle(card).getPropertyValue("--cc").trim();
+        if (cc) cardTip.style.setProperty("--cc", cc);
+        cardTip.textContent = title;
+        cardTip.classList.remove("hidden");
+        cardTip.classList.add("show");
+        cardTip.style.width = "";
+        cardTip.style.left = "0px";
+        cardTip.style.top = "0px";
+        var need = cardTip.offsetWidth;
+        var rect = card.getBoundingClientRect();
+        var w = Math.min(need, Math.floor(rect.width), window.innerWidth - 16);
+        if (w < 40) w = Math.min(need, window.innerWidth - 16);
+        cardTip.style.width = w + "px";
+        var left = rect.left + rect.width / 2 - w / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+        var top = rect.top - cardTip.offsetHeight - 8;
+        if (top < 8) top = rect.bottom + 8;
+        cardTip.style.left = left + "px";
+        cardTip.style.top = top + "px";
+      }
+
+      function bindCardTips(host) {
+        host.addEventListener("mouseover", function (e) {
+          var c = e.target && e.target.closest ? e.target.closest(".card[data-scope]") : null;
+          if (c && c !== tipCard) showCardTip(c);
+        });
+        host.addEventListener("mouseout", function (e) {
+          var c = e.target && e.target.closest ? e.target.closest(".card[data-scope]") : null;
+          if (!c) return;
+          var to = e.relatedTarget;
+          if (to && (to === c || (c.contains && c.contains(to)))) return;
+          hideCardTip();
+        });
+        host.addEventListener("focusin", function (e) {
+          var c = e.target && e.target.closest ? e.target.closest(".card[data-scope]") : null;
+          if (c && c !== tipCard) showCardTip(c);
+        });
+        host.addEventListener("focusout", function (e) {
+          var c = e.target && e.target.closest ? e.target.closest(".card[data-scope]") : null;
+          if (c) hideCardTip();
         });
       }
 
@@ -2327,7 +2424,7 @@
           tr.appendChild(td("cont", p.container));
 
           var t0 = td("created", p.age || "");
-          t0.title = "created " + (p.created || ""); tr.appendChild(t0);
+          tr.appendChild(t0);
 
           var t2 = td(null, null); t2.appendChild(badge(phaseCss(p.phase), p.phase)); tr.appendChild(t2);
           var t3 = td(null, null); t3.appendChild(badge(stateCss(p.state), p.state)); tr.appendChild(t3);
@@ -2337,9 +2434,9 @@
           tr.appendChild(t5);
 
           var t6 = td("cpu hide-sm hide-md", p.cpu || "");
-          t6.title = "% of limit (CPU usage / limit)"; tr.appendChild(t6);
+          tr.appendChild(t6);
           var t7 = td("mem hide-sm hide-md", p.mem || "");
-          t7.title = "% of limit (MEM usage / limit)"; tr.appendChild(t7);
+          tr.appendChild(t7);
 
           tbody.appendChild(tr);
         });
@@ -2355,6 +2452,8 @@
         var cards = d.cards || [];
         renderCards($("#cards"), cards.slice(0, 10));
         renderCards($("#cards2"), cards.slice(10));
+        decorateCards($("#cards"));
+        decorateCards($("#cards2"));
         renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || [], d.states || []);
         renderTable(d.pods || []);
         scopeNodeList();
@@ -2448,7 +2547,7 @@
       var settling = false;
       var settleTimer = null;
       var restartTimer = null;
-      var MAX_LOG_LINES = 5000;
+      var MAX_LOG_LINES = 11000;
       function followOn() { return followChk.classList.contains("on"); }
       function autoScrollOn() { return autoScroll.classList.contains("on"); }
       function settleStart() {
@@ -2715,14 +2814,18 @@
         lastKey = key;
 
         // Ограничение DOM: live-лог не должен расти бесконечно при долгом
-        // follow-стриме. Удаляем самые старые строки сверху.
+        // follow-стриме. Удаляем самые старые строки сверху. totalLines при
+        // этом сохраняется (счётчик «получено за сессию») — показанное число
+        // растёт вместе с реальным потоком, а DOM держит последние MAX_LOG_LINES.
         if (logBody.childElementCount >= MAX_LOG_LINES) {
           var overflow = logBody.childElementCount - MAX_LOG_LINES + 1;
           for (var i = 0; i < overflow; i++) {
             var first = logBody.firstElementChild;
             if (!first) break;
-            if (first.classList.contains("logline")) totalLines--;
-            if (first.dataset && first.dataset.match === "1") shownLines--;
+            // shownLines — число видимых строк (совпадения + раскрытый
+            // контекст), поэтому декрементим любую не скрытую строку, а не
+            // только match.
+            if (first.classList.contains("logline") && !first.classList.contains("hide")) shownLines--;
             logBody.removeChild(first);
           }
         }
@@ -2732,7 +2835,7 @@
         el.dataset.raw = d.message || d.error || "";
 
         var b = document.createElement("span");
-        b.className = "lb-badge"; b.textContent = d.context; b.title = (d.context || "") + "/" + (d.namespace || "");
+        b.className = "lb-badge"; b.textContent = d.context;
         var t = document.createElement("span");
         t.className = "lb-time"; t.textContent = d.timestamp || "";
         var w = document.createElement("span");
@@ -2879,7 +2982,7 @@
         logBody.classList.toggle("no-ts", !tsChk.checked);
       });
 
-      $("#btnClear").addEventListener("click", function () {
+      $("#btnClearLogs").addEventListener("click", function () {
         logBody.innerHTML = "";
         totalLines = 0; shownLines = 0;
         lastKey = null;
@@ -2914,6 +3017,7 @@
         if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
         modal.classList.add("hidden");
         clearLog();
+        scheduleRefresh();
       }
       $("#btnClose").addEventListener("click", closeModal);
 
@@ -2926,6 +3030,8 @@
         daemonset: "DaemonSet", replicaset: "ReplicaSet", job: "Job", cronjob: "CronJob",
         service: "Service", ingress: "Ingress", networkpolicy: "NetworkPolicy",
         configmap: "ConfigMap", secret: "Secret",
+        horizontalpodautoscaler: "HPA", verticalpodautoscaler: "VPA",
+        resourcequota: "ResourceQuota", limitrange: "LimitRange",
         persistentvolumeclaim: "PersistentVolumeClaim", persistentvolume: "PersistentVolume",
         serviceaccount: "ServiceAccount", role: "Role", rolebinding: "RoleBinding",
         clusterrole: "ClusterRole", clusterrolebinding: "ClusterRoleBinding",
@@ -2967,7 +3073,6 @@
         pairs.forEach(function (pair) {
           var chip = document.createElement("span");
           chip.className = "lchip";
-          chip.title = pair;
           var eq = pair.indexOf("=");
           var lk = document.createElement("span");
           lk.className = "lk";
@@ -3085,7 +3190,6 @@
               var ag = document.createElement("span");
               ag.className = "age";
               ag.textContent = it.age;
-              ag.title = "created " + (it.created || it.age);
               b.appendChild(ag);
             }
             b.addEventListener("click", function () { loadSpec(it); });
@@ -3192,7 +3296,9 @@
         jobs: "Jobs and CronJobs", configs: "Configs (ConfigMap, Secret) and RBAC (ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding)",
         workloads: "Workloads (Deployments, ReplicaSets, StatefulSets, DaemonSets)",
         pods: "Pods", pvc: "Volumes (PersistentVolumeClaim, PersistentVolume, StorageClass)", events: "Events",
-        charts: "Helm Charts", limits: "Pods with limits"
+        charts: "Helm Charts", limits: "Pods with limits",
+        autoscale: "Horizontal and Vertical Pod Autoscaling",
+        quota: "Resource Quotas and Limit Ranges"
       };
 
       function cardTitle(scope) { return CARD_SCOPE_TITLES[scope] || "Resources"; }
@@ -3349,6 +3455,7 @@
         specBody.className = "spec-body";
         specTitle.textContent = "";
         relState = { tr: null, items: [], kinds: {}, loaded: null, yaml: "", needle: "" };
+        scheduleRefresh();
       }
       $("#btnSpecClose").addEventListener("click", closeSpec);
 
@@ -3359,7 +3466,10 @@
       var evTypeSeg = $("#evTypeSeg"), evFilter = $("#evFilter"), evStat = $("#evStat");
       var evCtx = $("#evCtx"), evKinds = $("#evKinds");
       var evWrap = $("#evWrap"), evScroll = $("#evScroll");
+      var evPause = $("#evPause");
       var evState = { items: [], kinds: {} };
+      var evES = null;
+      var evPaused = false;
 
       function evTypeValue() {
         var r = evTypeSeg ? evTypeSeg.querySelector('input:checked') : null;
@@ -3371,6 +3481,44 @@
         return p.length >= 3 ? p[1] : "-";
       }
 
+      function setEvStat(text, cls) {
+        if (!evStat) return;
+        evStat.textContent = text;
+        evStat.className = "count" + (cls ? " " + cls : "");
+      }
+
+      function evStreamClose() {
+        if (evES) { evES.close(); evES = null; }
+      }
+
+      // evStreamOpen открывает поток и начинает получать свежие снапшоты событий.
+      function evStreamOpen() {
+        evStreamClose();
+        evES = new EventSource("/events");
+        evES.onopen = function () { setEvStat(""); };
+        evES.onmessage = function (e) {
+          var d;
+          try { d = JSON.parse(e.data); } catch (_) { return; }
+          if (!d || !d.items) return;
+          var prevCtx = evCtx.value;
+          evState.items = d.items || [];
+          fillEvCtx();
+          if (prevCtx && evCtx.querySelector('option[value="' + prevCtx + '"]')) {
+            evCtx.value = prevCtx;
+          } else {
+            evCtx.value = "";
+          }
+          renderEvKinds();
+          renderEvents();
+        };
+        evES.onerror = function () {
+          if (evES && evES.readyState === EventSource.CLOSED) setEvStat("Closed", "off");
+          else setEvStat("Reconnecting...", "wait");
+        };
+      }
+
+      function refreshEvents() { evStreamOpen(); }
+
       function openEvents() {
         evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Loading...</td></tr>';
         var allBtn = evTypeSeg && evTypeSeg.querySelector('input[value=""]');
@@ -3378,41 +3526,28 @@
         evCtx.value = "";
         evFilter.value = "";
         evState.kinds = {};
-        if (evStat) { evStat.textContent = ""; evStat.className = "count"; }
+        evPaused = false;
+        evPause.textContent = "Pause";
+        evPause.classList.remove("on");
+        setEvStat("");
         evModal.classList.remove("hidden");
-        refreshEvents();
-        // События обновляются в реальном времени, пока модалка открыта.
-        // Фильтры (текст/кластер/тип/виды) сохраняются между обновлениями.
-        evTimer = setInterval(refreshEvents, EV_REFRESH_MS);
+        // События читаются потоком, как логи: открываем SSE и получаем
+        // обновлённый список, фильтры применяются при отрисовке.
+        evStreamOpen();
       }
 
-      var evTimer = null;
-      var EV_REFRESH_MS = 5000;
-
-      // refreshEvents перезагружает события с сохранением текущих фильтров.
-      function refreshEvents() {
-        fetch("/api/overview?scope=events")
-          .then(function (r) { return r.json(); })
-          .then(function (d) {
-            var prevCtx = evCtx.value;
-            evState.items = d.items || [];
-            fillEvCtx();
-            if (prevCtx && evCtx.querySelector('option[value="' + prevCtx + '"]')) {
-              evCtx.value = prevCtx;
-            } else {
-              evCtx.value = "";
-            }
-            renderEvKinds();
-            renderEvents();
-          })
-          .catch(function (err) {
-            // Ошибка сети/401 — оставляем текущие данные и не перезаписываем
-            // содержимое, чтобы не терять фильтры.
-            if (!evState.items.length) {
-              evBodyEl.innerHTML = '<tr><td colspan="7" class="empty">Failed to load events: ' + err + '</td></tr>';
-            }
-          });
-      }
+      evPause.addEventListener("click", function () {
+        if (evPaused) {
+          evPaused = false; evPause.textContent = "Pause";
+          evPause.classList.remove("on");
+          evStreamOpen();
+        } else {
+          evPaused = true; evPause.textContent = "Resume";
+          evPause.classList.add("on");
+          evStreamClose();
+          setEvStat("Events paused", "wait");
+        }
+      });
 
       function fillEvCtx() {
         var seen = {}, list = [];
@@ -3474,7 +3609,6 @@
           var td = function (cls, txt, title) {
             var x = document.createElement("td");
             if (cls) x.className = cls;
-            if (title) x.title = title;
             x.textContent = txt;
             return x;
           };
@@ -3486,11 +3620,24 @@
           tr.appendChild(td("age", it.age || "-"));
           tr.appendChild(td("ctx", it.ctx || "-"));
           tr.appendChild(td("ns", it.ns || "-"));
-          tr.appendChild(td("name", it.name || "-", it.name));
+          var nameTd = td("name", it.name || "-", it.name);
+          if (evWrap.checked && it.name && it.name.indexOf("/") !== -1) {
+            nameTd.classList.add("obj-wrap");
+            nameTd.textContent = "";
+            var parts = it.name.split("/").filter(Boolean);
+            var fragN = document.createDocumentFragment();
+            parts.forEach(function (p) {
+              var d = document.createElement("div");
+              d.className = "obj-part";
+              d.textContent = p;
+              fragN.appendChild(d);
+            });
+            nameTd.appendChild(fragN);
+          }
+          tr.appendChild(nameTd);
           tr.appendChild(tdt);
           tr.appendChild(td("reason", it.reason || "-", it.reason));
           var msg = td("msg", it.message || "-", it.message);
-          msg.title = it.message || "";
           tr.appendChild(msg);
           frag.appendChild(tr);
         });
@@ -3499,10 +3646,14 @@
       }
 
       function closeEvents() {
-        if (evTimer) { clearInterval(evTimer); evTimer = null; }
+        evStreamClose();
+        evPaused = false;
+        evPause.textContent = "Pause";
+        evPause.classList.remove("on");
         evModal.classList.add("hidden");
         evState.items = [];
         evState.kinds = {};
+        scheduleRefresh();
       }
       $("#btnEvClose").addEventListener("click", closeEvents);
       evTypeSeg.addEventListener("change", renderEvents);
@@ -3510,6 +3661,7 @@
       evFilter.addEventListener("input", renderEvents);
       evWrap.addEventListener("change", function () {
         if (evScroll) evScroll.classList.toggle("no-wrap", !evWrap.checked);
+        renderEvents();
       });
 
       // Поиск по содержимому текущего манифеста — чисто на клиенте (данные уже
@@ -3540,7 +3692,12 @@
       }
       bindCards($("#cards"));
       bindCards($("#cards2"));
-
+      bindCardTips($("#cards"));
+      bindCardTips($("#cards2"));
+      decorateCards($("#cards"));
+      decorateCards($("#cards2"));
+      window.addEventListener("resize", hideCardTip);
+      window.addEventListener("scroll", hideCardTip, true);
       document.addEventListener("keydown", function (e) {
         if (e.key !== "Escape") return;
         if (!modal.classList.contains("hidden")) { closeModal(); return; }

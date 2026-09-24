@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -281,6 +282,46 @@ func TestWorkloadOwnerMapAndResolve(t *testing.T) {
 	}
 }
 
+func TestWorkloadOwnerMapNestedAndErrors(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	// Новый kubectl оборачивает каждый тип в под-List; у элементов может не быть
+	// поля kind — он берётся из имени под-List.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte(`{"kind":"List","items":[
+			{"kind":"ReplicaSetList","items":[
+				{"metadata":{"name":"web-abc123","namespace":"prod","ownerReferences":[{"kind":"Deployment","name":"web"}]}}
+			]},
+			{"kind":"DeploymentList","items":[
+				{"metadata":{"name":"web","namespace":"prod","ownerReferences":[]}}
+			]},
+			{"kind":"JobList","items":[
+				{"metadata":{"name":"migrate","namespace":"ops","ownerReferences":[{"kind":"CronJob","name":"nightly"}]}}
+			]}
+		]}`), nil
+	}
+	m := workloadOwnerMap("c1")
+	if got, want := m["web-abc123|replicaset"], [2]string{"Deployment", "web"}; got != want {
+		t.Errorf("nested rs->deploy = %v, want %v", got, want)
+	}
+	if got, want := m["migrate|job"], [2]string{"CronJob", "nightly"}; got != want {
+		t.Errorf("nested job->cronjob = %v, want %v", got, want)
+	}
+
+	// Ошибка kubectl — nil.
+	runKubectlFn = func(args ...string) ([]byte, error) { return nil, fmt.Errorf("rbac") }
+	if got := workloadOwnerMap("c1"); got != nil {
+		t.Errorf("error → %v, want nil", got)
+	}
+
+	// Битый JSON — nil.
+	runKubectlFn = func(args ...string) ([]byte, error) { return []byte("{not json"), nil }
+	if got := workloadOwnerMap("c1"); got != nil {
+		t.Errorf("bad json → %v, want nil", got)
+	}
+}
+
 func TestEgressKinds(t *testing.T) {
 	oldRun := runKubectlFn
 	runKubectlFn = func(args ...string) ([]byte, error) {
@@ -386,13 +427,15 @@ func TestBuildCards(t *testing.T) {
 		NodeReady:  4, NodeTotal: 5,
 		Pods: 10, PodsRunning: 8,
 		Containers: 20, Running: 15,
-		Networks: 7,
-		Services: 7,
-		Jobs:     4,
-		JobsDone: 3,
-		Configs:  6,
-		Charts:   5,
-		CpuMilli: 1200, CpuTotalMilli: 4000,
+		Networks:   7,
+		Services:   7,
+		Jobs:       4,
+		JobsDone:   3,
+		Configs:    6,
+		ConfigMaps: 4,
+		Secrets:    2,
+		Charts:     5,
+		CpuMilli:   1200, CpuTotalMilli: 4000,
 		MemBytes: 2 << 30, MemTotalBytes: 4 << 30,
 		CpuLimitMilli: 1200, MemLimitBytes: 2 << 30,
 		PVCBound: 2, PVCTotal: 5, PVCBoundBytes: 1 << 30, PVCTotalBytes: 2 << 30, PVTotalBytes: 4 << 30, PVCOk: 1,
@@ -400,14 +443,14 @@ func TestBuildCards(t *testing.T) {
 	if len(cards) != 15 {
 		t.Fatalf("len(cards) = %d, want 15", len(cards))
 	}
-	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Charts", "Service", "Configs", "Events"}
+	row1 := []string{"Clusters", "Namespaces", "Nodes", "Pods", "Containers", "Jobs", "Charts", "Services", "Configs", "Events"}
 	row2 := []string{"CPU", "Memory", "Limits", "PVC/PV size", "PVC/PV Count"}
 	for i, l := range append(row1, row2...) {
 		if cards[i].Label != l {
 			t.Errorf("cards[%d].Label = %q, want %q", i, cards[i].Label, l)
 		}
 	}
-	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "charts", "svc", "configs", "events", "", "", "limits", "pvc", "pvc"}
+	scopes := []string{"ctx", "ns", "nodes", "pods", "workloads", "jobs", "charts", "svc", "configs", "events", "autoscale", "quota", "limits", "pvc", "pvc"}
 	for i, s := range scopes {
 		if cards[i].Scope != s {
 			t.Errorf("cards[%d].Scope = %q, want %q (%s)", i, cards[i].Scope, s, cards[i].Label)
@@ -422,16 +465,16 @@ func TestBuildCards(t *testing.T) {
 	if cards[6].Label != "Charts" || cards[6].Value != "5" {
 		t.Errorf("charts card: %+v", cards[6])
 	}
-	if cards[7].Value != "7" || cards[8].Value != "6" {
+	if cards[7].Value != "7" || cards[8].Value != "4/2" {
 		t.Errorf("networks/configs cards = %+v", cards[7:9])
 	}
 	if cards[9].Label != "Events" || cards[9].Value != "0" {
 		t.Errorf("events card: %+v", cards[9])
 	}
-	if cards[10].Value != "1.20/4.00" || cards[10].Scope != "" {
+	if cards[10].Value != "1.20/4.00" || cards[10].Scope != "autoscale" {
 		t.Errorf("cpu card: %+v", cards[10])
 	}
-	if cards[11].Value != "2.00/4.00 GiB" || cards[11].Scope != "" {
+	if cards[11].Value != "2.00/4.00 GiB" || cards[11].Scope != "quota" {
 		t.Errorf("memory card: %+v", cards[11])
 	}
 	if cards[12].Label != "Limits" || cards[12].Value != "1.20/2.00 GiB" || cards[12].Scope != "limits" {
@@ -458,6 +501,29 @@ func TestScopeKindsPVC(t *testing.T) {
 		if k.cat != "Storage" {
 			t.Errorf("scopeKinds(pvc)[%s] cat = %q, want Storage", k.kind, k.cat)
 		}
+	}
+}
+
+func TestScopeKindsQuotaAutoscale(t *testing.T) {
+	q := scopeKinds("quota")
+	if len(q) != 2 {
+		t.Fatalf("scopeKinds(quota) len = %d, want 2: %+v", len(q), q)
+	}
+	wantQ := map[string]string{"resourcequota": "resourcequotas", "limitrange": "limitranges"}
+	for _, k := range q {
+		if wantQ[k.kind] != k.plural {
+			t.Errorf("quota kind %q plural = %q, want %q", k.kind, k.plural, wantQ[k.kind])
+		}
+	}
+
+	a := scopeKinds("autoscale")
+	if len(a) != 1 || a[0].kind != "horizontalpodautoscaler" || a[0].plural != "horizontalpodautoscalers" {
+		t.Fatalf("scopeKinds(autoscale) = %+v, want only HPA", a)
+	}
+
+	// Неизвестный scope — nil.
+	if got := scopeKinds("nope"); got != nil {
+		t.Errorf("scopeKinds(nope) = %+v, want nil", got)
 	}
 }
 
@@ -994,6 +1060,57 @@ func fakePods() []Pod {
 	}
 }
 
+func TestLogRequests(t *testing.T) {
+	oldOut := log.Writer()
+	oldFlags := log.Flags()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(oldOut); log.SetFlags(oldFlags) }()
+
+	var reached bool
+	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pods?ctx=prod&ns=ops", nil)
+	req.RemoteAddr = "10.0.0.5:4321"
+	req.Header.Set("User-Agent", "cb-test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !reached {
+		t.Fatal("next handler not called")
+	}
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("status = %d, want 418", rec.Code)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "[GET] 10.0.0.5:4321 (cb-test) -> /api/pods?ctx=prod&ns=ops") {
+		t.Errorf("log = %q", got)
+	}
+
+	// Длинный URI обрезается до 200 символов + "...".
+	buf.Reset()
+	long := "/api/object?name=" + strings.Repeat("x", 400)
+	req = httptest.NewRequest(http.MethodGet, long, nil)
+	req.RemoteAddr = "10.0.0.6:1"
+	req.Header.Set("User-Agent", "ua")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	got = buf.String()
+	if !strings.Contains(got, "...") {
+		t.Errorf("long URI not truncated: %q", got)
+	}
+	// Путь до "..." не должен превышать 200 символов.
+	if i := strings.Index(got, " -> "); i >= 0 {
+		uri := strings.TrimSuffix(strings.TrimSpace(got[i+4:]), "\n")
+		if len(uri) != 200+3 {
+			t.Errorf("truncated uri len = %d, want 203: %q", len(uri), uri)
+		}
+	}
+}
+
 func TestIndexHandlerRendersPage(t *testing.T) {
 	defer withFakes(t, fakePods(), []string{"k8s-prod"})()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1085,6 +1202,98 @@ func TestAPIHandlerJSON(t *testing.T) {
 	}
 	if len(data.Cards) != 15 {
 		t.Errorf("len(Cards) = %d, want 15", len(data.Cards))
+	}
+}
+
+func TestDataCacheFreshBypass(t *testing.T) {
+	var calls int
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	c := &dataCache{now: func() time.Time { return now }, ttl: time.Hour}
+	fetch := func() *PageData {
+		calls++
+		return &PageData{Generated: now}
+	}
+	render := func(d *PageData) ([]byte, []byte) {
+		return nil, []byte(fmt.Sprintf("gen=%d", d.Generated.Unix()))
+	}
+
+	var j1 []byte
+	if _, _, j1 = c.view(fetch, render); calls != 1 {
+		t.Fatalf("первый вызов: calls=%d, want 1", calls)
+	}
+	if string(j1) != fmt.Sprintf("gen=%d", now.Unix()) {
+		t.Fatalf("json1 = %q", j1)
+	}
+	// второй вызов в пределах ttl — из кеша, fetch не запускается.
+	_, _, j2 := c.view(fetch, render)
+	if calls != 1 {
+		t.Fatalf("кеш-хит: calls=%d, want 1", calls)
+	}
+	if !bytes.Equal(j1, j2) {
+		t.Errorf("кеш вернул другой json")
+	}
+	// fresh=true — принудительный сбор даже при age < ttl.
+	now = now.Add(3 * time.Second)
+	_, _, j3 := c.viewFresh(fetch, render)
+	if calls != 2 {
+		t.Fatalf("fresh: calls=%d, want 2", calls)
+	}
+	if string(j3) != fmt.Sprintf("gen=%d", now.Unix()) {
+		t.Errorf("json3 = %q", j3)
+	}
+}
+
+func TestAPIForcesFresh(t *testing.T) {
+	var calls int
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	oldCache := overviewCache
+	overviewCache = &dataCache{now: func() time.Time { return now }, ttl: time.Hour}
+	oldF, oldCtx := fetchAllFn, getContextsFn
+	fetchAllFn = func() Overview {
+		calls++
+		return Overview{TotalCtx: 1, AvailCtx: 1, Pods: fakePods()}
+	}
+	getContextsFn = func() ([]string, error) { return []string{"k8s-prod"}, nil }
+	defer func() {
+		overviewCache = oldCache
+		fetchAllFn, getContextsFn = oldF, oldCtx
+	}()
+
+	rec := httptest.NewRecorder()
+	handleAPI(rec, httptest.NewRequest(http.MethodGet, "/api/pods", nil))
+	if calls != 1 {
+		t.Fatalf("после первого запроса calls=%d, want 1", calls)
+	}
+	var first PageData
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("invalid first json: %v", err)
+	}
+
+	// Повторный запрос без параметра — из кеша, сбор не запускается.
+	rec2 := httptest.NewRecorder()
+	handleAPI(rec2, httptest.NewRequest(http.MethodGet, "/api/pods", nil))
+	if calls != 1 {
+		t.Fatalf("кеш-хит: calls=%d, want 1", calls)
+	}
+
+	// ?refresh=1 — обход кеша: сбор повторяется, generated обновился.
+	// Небольшая пауза, чтобы времени: Windows-таймер выдаёт одинаковый
+	// time.Now() для двух очень быстрых последовательных вызовов.
+	time.Sleep(20 * time.Millisecond)
+	rec3 := httptest.NewRecorder()
+	handleAPI(rec3, httptest.NewRequest(http.MethodGet, "/api/pods?refresh=1", nil))
+	if calls != 2 {
+		t.Fatalf("Refresh: calls=%d, want 2", calls)
+	}
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec3.Code)
+	}
+	var d PageData
+	if err := json.Unmarshal(rec3.Body.Bytes(), &d); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if !d.Generated.After(first.Generated) {
+		t.Errorf("generated не обновился: first=%v refresh=%v", first.Generated, d.Generated)
 	}
 }
 
@@ -1473,6 +1682,59 @@ func TestObjectHandlerMissingName(t *testing.T) {
 	}
 }
 
+func TestObjectHandlerChartAndError(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	// chart: helm-релиз декодируется из секрета.
+	rel := map[string]interface{}{"name": "myapp", "info": map[string]interface{}{"status": "deployed"}}
+	payload, _ := json.Marshal(rel)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write(payload)
+	gz.Close()
+	releaseB64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		switch {
+		case strings.Contains(j, "get secrets"):
+			return []byte(`{"items":[{"metadata":{"name":"sh.helm.release.v1.myapp.v2"}}]}`), nil
+		case strings.Contains(j, "get secret sh.helm.release.v1.myapp.v2"):
+			return []byte(fmt.Sprintf(`{"type":"helm.sh/release.v1","data":{"release":%q}}`, releaseB64)), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+	rec := httptest.NewRecorder()
+	handleObject(rec, httptest.NewRequest(http.MethodGet, "/api/object?ctx=c1&ns=ns&name=myapp&kind=chart", nil))
+	var resp struct{ Yaml, Error string }
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "" || !strings.Contains(resp.Yaml, "myapp") {
+		t.Errorf("chart resp = %+v", resp)
+	}
+
+	// Ошибка kubectl с пустым выводом — в Error попадает текст ошибки.
+	runKubectlFn = func(args ...string) ([]byte, error) { return nil, fmt.Errorf("boom") }
+	rec = httptest.NewRecorder()
+	handleObject(rec, httptest.NewRequest(http.MethodGet, "/api/object?ctx=c1&name=x&kind=pod", nil))
+	resp = struct{ Yaml, Error string }{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "boom" {
+		t.Errorf("empty-output error = %q, want boom", resp.Error)
+	}
+
+	// Ошибка kubectl с выводом — в Error попадает shortOutput.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte("Error from server (NotFound)"), fmt.Errorf("exit 1")
+	}
+	rec = httptest.NewRecorder()
+	handleObject(rec, httptest.NewRequest(http.MethodGet, "/api/object?ctx=c1&name=x&kind=pod", nil))
+	resp = struct{ Yaml, Error string }{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Error != "Error from server (NotFound)" {
+		t.Errorf("output error = %q", resp.Error)
+	}
+}
+
 func TestClusterSnippetYAML(t *testing.T) {
 	oldRun := runKubectlFn
 	runKubectlFn = func(args ...string) ([]byte, error) {
@@ -1545,6 +1807,103 @@ func TestObjectHandlerSkipsNSForClusterScoped(t *testing.T) {
 	handleObject(rec, req)
 	if rec.Body.String() == "" || strings.Contains(rec.Body.String(), `"error":"cluster-scoped`) {
 		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestAutoscaleScopeKinds(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	call := func(apiResources string) []string {
+		runKubectlFn = func(args ...string) ([]byte, error) {
+			j := strings.Join(args, " ")
+			if strings.Contains(j, "api-resources") {
+				return []byte(apiResources), nil
+			}
+			return nil, fmt.Errorf("unexpected: %s", j)
+		}
+		var out []string
+		for _, k := range autoscaleScopeKinds("c1") {
+			out = append(out, k.kind)
+		}
+		return out
+	}
+
+	// VPA CRD отсутствует — только HPA.
+	got := call("horizontalpodautoscalers.autoscaling\npoddisruptionbudgets.policy\n")
+	if len(got) != 1 || got[0] != "horizontalpodautoscaler" {
+		t.Fatalf("без VPA kinds = %v, want [horizontalpodautoscaler]", got)
+	}
+
+	// VPA присутствует (реальный формат с API-группой) — HPA + VPA.
+	got = call("horizontalpodautoscalers.autoscaling\nverticalpodautoscalers.autoscaling.k8s.io\nnetworkpolicies.networking.k8s.io\n")
+	if len(got) != 2 || got[0] != "horizontalpodautoscaler" || got[1] != "verticalpodautoscaler" {
+		t.Fatalf("с VPA kinds = %v, want [horizontalpodautoscaler verticalpodautoscaler]", got)
+	}
+
+	// VPA-checkpoints не должен приниматься за основной VPA.
+	got = call("verticalpodautoscalercheckpoints.autoscaling.k8s.io\n")
+	if len(got) != 1 || got[0] != "horizontalpodautoscaler" {
+		t.Fatalf("только checkpoints kinds = %v, want [horizontalpodautoscaler]", got)
+	}
+
+	// Ошибка api-resources — деградация к HPA.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("rbac denied")
+	}
+	got = nil
+	for _, k := range autoscaleScopeKinds("c1") {
+		got = append(got, k.kind)
+	}
+	if len(got) != 1 || got[0] != "horizontalpodautoscaler" {
+		t.Fatalf("при ошибке kinds = %v, want [horizontalpodautoscaler]", got)
+	}
+}
+
+func TestOverviewAutoscaleWithVPA(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	getContextsFn = func() ([]string, error) { return []string{"c1"}, nil }
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+
+	var gotGet string
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if strings.Contains(j, "api-resources") {
+			return []byte("horizontalpodautoscalers.autoscaling\nverticalpodautoscalers.autoscaling.k8s.io\n"), nil
+		}
+		if strings.Contains(j, " get horizontalpodautoscalers,verticalpodautoscalers ") {
+			gotGet = j
+			return []byte(`{"kind":"List","items":[
+				{"kind":"HorizontalPodAutoscalerList","items":[
+					{"metadata":{"name":"web-hpa","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"}}
+				]},
+				{"kind":"VerticalPodAutoscalerList","items":[
+					{"metadata":{"name":"web-vpa","namespace":"prod","creationTimestamp":"2026-01-02T00:00:00Z"}}
+				]}
+			]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/overview?scope=autoscale", nil)
+	rec := httptest.NewRecorder()
+	handleOverview(rec, req)
+	var r relatedResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if r.Error != "" {
+		t.Fatalf("error = %q", r.Error)
+	}
+	if !strings.Contains(gotGet, "get horizontalpodautoscalers,verticalpodautoscalers") {
+		t.Fatalf("kubectl get = %q, want both hpa and vpa", gotGet)
+	}
+	kinds := map[string]int{}
+	for _, it := range r.Items {
+		kinds[it.Kind]++
+	}
+	if kinds["horizontalpodautoscaler"] != 1 || kinds["verticalpodautoscaler"] != 1 {
+		t.Fatalf("kinds = %v, want 1 hpa + 1 vpa: %+v", kinds, r.Items)
 	}
 }
 
@@ -1622,9 +1981,28 @@ func TestOverviewScopes(t *testing.T) {
 		{"kind":"ReplicaSetList","items":[]}
 	]}`
 
+	runAutoscale := `{"kind":"List","items":[
+		{"kind":"HorizontalPodAutoscalerList","items":[
+			{"metadata":{"name":"web-hpa","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"}},
+			{"metadata":{"name":"db-hpa","namespace":"ops","creationTimestamp":"2026-01-02T00:00:00Z"}}
+		]},
+		{"kind":"VerticalPodAutoscalerList","items":[]}
+	]}`
+
+	runQuota := `{"kind":"List","items":[
+		{"kind":"ResourceQuotaList","items":[
+			{"metadata":{"name":"compute-quota","namespace":"prod","creationTimestamp":"2026-01-01T00:00:00Z"}}
+		]},
+		{"kind":"LimitRangeList","items":[
+			{"metadata":{"name":"cpu-mem-limit","namespace":"prod","creationTimestamp":"2026-01-02T00:00:00Z"}}
+		]}
+	]}`
+
 	runKubectlFn = func(args ...string) ([]byte, error) {
 		j := strings.Join(args, " ")
 		switch {
+		case strings.Contains(j, "api-resources"):
+			return []byte("horizontalpodautoscalers\n"), nil // VPA CRD отсутствует
 		case strings.Contains(j, "get persistentvolumeclaims,persistentvolumes,storageclasses"):
 			return []byte(runVolume), nil
 		case strings.Contains(j, "get services,ingresses,networkpolicies,endpoints,endpointslices"):
@@ -1643,6 +2021,10 @@ func TestOverviewScopes(t *testing.T) {
 			return []byte(runEvents), nil
 		case strings.Contains(j, "get deployments,daemonsets,statefulsets,replicasets"):
 			return []byte(runWorkloads), nil
+		case strings.Contains(j, "get horizontalpodautoscalers"):
+			return []byte(runAutoscale), nil
+		case strings.Contains(j, "get resourcequotas,limitranges"):
+			return []byte(runQuota), nil
 		}
 		return []byte("unexpected: " + j), fmt.Errorf("unexpected")
 	}
@@ -1716,6 +2098,33 @@ func TestOverviewScopes(t *testing.T) {
 	}
 	if !hasWarn || !hasNormal {
 		t.Errorf("events missing Warning/Normal: %+v", r.Items)
+	}
+
+	// autoscale: HPA из обоих контекстов; VPA отсутствует (CRD нет в api-resources).
+	r = call("autoscale")
+	if len(r.Items) != 4 {
+		t.Fatalf("autoscale items = %d, want 4 (2 ctx x 2 HPA)", len(r.Items))
+	}
+	for _, it := range r.Items {
+		if it.Kind != "horizontalpodautoscaler" || it.Ns == "" || it.Ctx == "" {
+			t.Errorf("autoscale item = %+v", it)
+		}
+	}
+
+	// quota: ResourceQuota + LimitRange по каждому контексту.
+	r = call("quota")
+	if len(r.Items) != 4 {
+		t.Fatalf("quota items = %d, want 4 (2 ctx x quota+limitrange)", len(r.Items))
+	}
+	kindsQ := map[string]bool{}
+	for _, it := range r.Items {
+		kindsQ[it.Kind] = true
+		if it.Ns == "" || it.Ctx == "" {
+			t.Errorf("quota item = %+v", it)
+		}
+	}
+	if !kindsQ["resourcequota"] || !kindsQ["limitrange"] {
+		t.Errorf("quota kinds = %v, want resourcequota+limitrange", kindsQ)
 	}
 
 	// nodes: ready/not ready.
@@ -1833,6 +2242,55 @@ func TestOverviewScopeRBACSkipsDeniedContext(t *testing.T) {
 	}
 	if r.Error != "" {
 		t.Errorf("error не ожидался: %q", r.Error)
+	}
+}
+
+func TestOverviewScopeEdgeCases(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+
+	call := func(target string) relatedResp {
+		rec := httptest.NewRecorder()
+		handleOverview(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		var r relatedResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+			t.Fatalf("%s: bad json: %v", target, err)
+		}
+		return r
+	}
+
+	// Нет scope.
+	if r := call("/api/overview"); r.Error != "missing scope" {
+		t.Errorf("missing scope error = %q", r.Error)
+	}
+
+	// Ошибка получения контекстов пробрасывается в Error.
+	getContextsFn = func() ([]string, error) { return nil, fmt.Errorf("no kubeconfig") }
+	if r := call("/api/overview?scope=ctx"); r.Error != "no kubeconfig" {
+		t.Errorf("contexts error = %q", r.Error)
+	}
+
+	// Неизвестный scope.
+	getContextsFn = func() ([]string, error) { return []string{"c1"}, nil }
+	if r := call("/api/overview?scope=bogus"); r.Error != "unknown scope" {
+		t.Errorf("unknown scope error = %q", r.Error)
+	}
+
+	// onlyCtx ограничивает контексты; charts резолвит имя helm-релиза.
+	getContextsFn = func() ([]string, error) { return []string{"c1", "c2"}, nil }
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if strings.Contains(j, "get secrets") && strings.Contains(j, "owner=helm") {
+			return []byte(`{"items":[{"metadata":{"name":"sh.helm.release.v1.app.v2","namespace":"ops","creationTimestamp":"2026-01-01T00:00:00Z"}}]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+	r := call("/api/overview?scope=charts&ctx=c2")
+	if r.Error != "" || len(r.Items) != 1 {
+		t.Fatalf("charts items = %+v (err %q)", r.Items, r.Error)
+	}
+	if r.Items[0].Kind != "chart" || r.Items[0].Name != "app" || r.Items[0].Ctx != "c2" || r.Items[0].Ns != "ops" {
+		t.Errorf("charts item = %+v", r.Items[0])
 	}
 }
 
@@ -2146,7 +2604,7 @@ func TestEnvHelpers(t *testing.T) {
 	if got := envDurationSeconds("CB_DATA_CACHE", 15*time.Second); got != 0 {
 		t.Errorf("envDurationSeconds(CB_DATA_CACHE=0) = %v, ожидали 0", got)
 	}
-	 // TestMain выставляет dataTTL = 0 до прогона тестов
+	// TestMain выставляет dataTTL = 0 до прогона тестов
 	if dataTTL != 0 {
 		t.Errorf("dataTTL = %v в тестах, ожидали 0", dataTTL)
 	}
@@ -2390,6 +2848,68 @@ func TestHelmReleaseYAML(t *testing.T) {
 	}
 	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); !strings.Contains(err.Error(), "v2") {
 		t.Errorf("не выбрана свежая ревизия: %v", err)
+	}
+}
+
+func TestHelmReleaseYAMLErrors(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	secretsList := []byte(`{"items":[{"metadata":{"name":"sh.helm.release.v1.myapp.v2"}}]}`)
+
+	// 1) Ошибка получения списка секретов.
+	runKubectlFn = func(args ...string) ([]byte, error) { return nil, fmt.Errorf("rbac") }
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка releaseSecretForName")
+	}
+
+	// 2) Ошибка получения самого секрета.
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "get secrets") {
+			return secretsList, nil
+		}
+		return nil, fmt.Errorf("get secret failed")
+	}
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка get secret")
+	}
+
+	withSecret := func(secJSON string) {
+		runKubectlFn = func(args ...string) ([]byte, error) {
+			if strings.Contains(strings.Join(args, " "), "get secrets") {
+				return secretsList, nil
+			}
+			return []byte(secJSON), nil
+		}
+	}
+
+	// 3) Битый JSON секрета.
+	withSecret("{not json")
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка json секрета")
+	}
+
+	// 4) Нет данных release.
+	withSecret(`{"type":"helm.sh/release.v1","data":{}}`)
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка «no release data»")
+	}
+
+	// 5) release есть, но это не gzip.
+	withSecret(`{"type":"helm.sh/release.v1","data":{"release":"aGVsbG8="}}`)
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка gzip")
+	}
+
+	// 6) gzip есть, но внутри не JSON.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write([]byte("not-json"))
+	gz.Close()
+	b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+	withSecret(fmt.Sprintf(`{"type":"helm.sh/release.v1","data":{"release":%q}}`, b64))
+	if _, err := helmReleaseYAML("ctx", "ns", "myapp"); err == nil {
+		t.Error("ожидалась ошибка json внутри gzip")
 	}
 }
 
@@ -2679,5 +3199,592 @@ func TestAuthValidToken(t *testing.T) {
 	expired := authToken("admin", -time.Hour)
 	if authValid(expired) {
 		t.Error("просроченный токен не должен проходить authValid")
+	}
+}
+
+func TestEventsStream(t *testing.T) {
+	// Потоковый /events шлёт по SSE снапшоты событий в том же формате, что и
+	// /api/overview?scope=events, периодически via ticker. Проверяем первый
+	// "data:" кадр.
+	old := getContextsFn
+	oldRun := runKubectlFn
+	defer func() {
+		getContextsFn = old
+		runKubectlFn = oldRun
+	}()
+	getContextsFn = func() ([]string, error) { return []string{"c1", "c2"}, nil }
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		if strings.Contains(j, "get events") {
+			return []byte(`{"items":[
+				{"metadata":{"namespace":"ops"},"type":"Warning","reason":"BackOff","message":"back-off","involvedObject":{"kind":"Pod","name":"web-0"},"lastTimestamp":"2026-01-06T00:00:00Z"},
+				{"metadata":{"namespace":"prod"},"type":"Normal","reason":"Started","message":"started","involvedObject":{"kind":"Pod","name":"web-1"},"lastTimestamp":"2026-01-06T01:00:00Z"}
+			]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+
+	// http.ResponseWriter, потокобезопасно копящий записанные байты.
+	w := &sseWriter{hdr: make(http.Header)}
+	w.hdr.Set("Content-Type", "text/event-stream; charset=utf-8")
+
+	req := httptest.NewRequest(http.MethodGet, "/events?interval=1", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	req = req.WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		handleEvents(w, req)
+		close(done)
+	}()
+
+	wait := make(chan struct{})
+	go func() {
+		for {
+			w.mu.Lock()
+			has := bytes.Contains(w.buf.Bytes(), []byte("data: "))
+			w.mu.Unlock()
+			if has {
+				close(wait)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-wait:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("поток не отправил ни одного data-кадра")
+	}
+	cancel()
+	<-done
+
+	w.mu.Lock()
+	body := w.buf.String()
+	w.mu.Unlock()
+	for _, want := range []string{"retry: 2000", `"reason":"BackOff"`, `"reason":"Started"`, `"ctx":"c1"`, `"ctx":"c2"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("поток не содержит %q", want)
+		}
+	}
+}
+
+func TestProcReaderReadClose(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	r := &procReader{r: pr}
+	if _, err := pw.Write([]byte("hello")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	pw.Close()
+	buf := make([]byte, 16)
+	n, err := r.Read(buf)
+	if err != nil || string(buf[:n]) != "hello" {
+		t.Fatalf("Read = %q, %v", buf[:n], err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close = %v", err)
+	}
+	// Повторный Close идемпотентен (sync.Once).
+	if err := r.Close(); err != nil {
+		t.Fatalf("second Close = %v", err)
+	}
+	// Пустой procReader тоже безопасно закрывается.
+	if err := (&procReader{}).Close(); err != nil {
+		t.Fatalf("empty Close = %v", err)
+	}
+}
+
+func TestOpenKubectlLogStreamNotFound(t *testing.T) {
+	t.Setenv("PATH", "")
+	_, err := openKubectlLogStream(Selection{Context: "c1", Namespace: "ns", Pod: "p"}, "", "", false, 10)
+	if err == nil {
+		t.Fatal("ожидалась ошибка запуска kubectl при пустом PATH")
+	}
+}
+
+func TestAuthHandlerLoginGetAndLogout(t *testing.T) {
+	old := getenv
+	defer func() {
+		getenv = old
+		authEnabled = false
+		authUser, authPass = "", ""
+		authTTL = defaultAuthTTL
+		authSecret = nil
+	}()
+	getenv = func(k string) string {
+		switch k {
+		case "CB_AUTH_USERNAME":
+			return "admin"
+		case "CB_AUTH_PASSWORD":
+			return "secret123"
+		}
+		return ""
+	}
+	authSetup()
+
+	h := authHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// GET /login — страница логина.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Sign in") {
+		t.Errorf("GET /login: status=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	// GET /logout — редирект и сброс cookie.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/logout", nil))
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != authLoginURL {
+		t.Errorf("GET /logout: status=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// /logs и /events без сессии — 401 (SSE-маршруты).
+	for _, p := range []string{"/logs", "/events"} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s без сессии: status=%d, want 401", p, rec.Code)
+		}
+	}
+}
+
+// sseWriter — http.ResponseWriter, потокобезопасно копящий записанные байты.
+type sseWriter struct {
+	mu  sync.Mutex
+	hdr http.Header
+	buf bytes.Buffer
+}
+
+func (w *sseWriter) Header() http.Header { return w.hdr }
+func (w *sseWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+func (w *sseWriter) WriteHeader(code int) {}
+func (w *sseWriter) Flush()               {}
+
+func TestLogsHandlerStreamingUnsupported(t *testing.T) {
+	// plainWriter не реализует http.Flusher → 500.
+	plain := &plainWriter{}
+	handleLogs(plain, httptest.NewRequest(http.MethodGet, "/logs?sel=x|y|z", nil))
+	if plain.code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", plain.code)
+	}
+}
+
+func TestLogsHandlerWriteError(t *testing.T) {
+	oldOut := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldOut)
+
+	old := openLogStreamFn
+	openLogStreamFn = func(sel Selection, since, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+		return nil, fmt.Errorf("open boom")
+	}
+	defer func() { openLogStreamFn = old }()
+
+	handleLogs(&failFlusher{}, httptest.NewRequest(http.MethodGet, "/logs?sel=x|y|z&follow=0", nil))
+	if !strings.Contains(buf.String(), "sse") {
+		t.Errorf("ожидался лог ошибки записи SSE, got %q", buf.String())
+	}
+}
+
+// plainWriter — ResponseWriter без Flush (проверка «Streaming unsupported»).
+type plainWriter struct {
+	hdr  http.Header
+	code int
+}
+
+func (p *plainWriter) Header() http.Header {
+	if p.hdr == nil {
+		p.hdr = http.Header{}
+	}
+	return p.hdr
+}
+func (p *plainWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (p *plainWriter) WriteHeader(code int)        { p.code = code }
+
+// failFlusher — ResponseWriter с Flush, но падающим Write.
+type failFlusher struct{ failWriter }
+
+func (f *failFlusher) Flush() {}
+
+func TestCollectEventsErrors(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		switch {
+		case strings.Contains(j, "--context bad"):
+			return []byte("Forbidden"), fmt.Errorf("exit 1")
+		case strings.Contains(j, "--context broken"):
+			return []byte("{not json"), nil
+		default:
+			return []byte(`{"items":[{"metadata":{"namespace":"prod"},"type":"Warning","reason":"BackOff","message":"m","lastTimestamp":"2026-01-01T00:00:00Z","involvedObject":{"kind":"Pod","name":"web"}}]}`), nil
+		}
+	}
+
+	refs := collectEvents([]string{"bad", "broken", "ok"})
+	var rbac, ev bool
+	for _, r := range refs {
+		if r.Reason == "RBAC/error" && r.Ctx == "bad" {
+			rbac = true
+		}
+		if r.Kind == "event" && r.Ctx == "ok" && r.Type == "Warning" {
+			ev = true
+		}
+	}
+	if !rbac {
+		t.Errorf("нет RBAC/error ref: %+v", refs)
+	}
+	if !ev {
+		t.Errorf("нет распарсенного события: %+v", refs)
+	}
+	// "broken" (битый JSON) не добавляет ничего.
+	for _, r := range refs {
+		if r.Ctx == "broken" {
+			t.Errorf("битый JSON не должен давать ref: %+v", r)
+		}
+	}
+}
+
+func TestEventsHandlerEdgeCases(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+
+	// Без Flusher — 500.
+	plain := &plainWriter{}
+	handleEvents(plain, httptest.NewRequest(http.MethodGet, "/events", nil))
+	if plain.code != http.StatusInternalServerError {
+		t.Errorf("no-flusher status = %d, want 500", plain.code)
+	}
+
+	// Ошибка получения контекстов — JSON с error.
+	getContextsFn = func() ([]string, error) { return nil, fmt.Errorf("no kubeconfig") }
+	rec := httptest.NewRecorder()
+	handleEvents(rec, httptest.NewRequest(http.MethodGet, "/events", nil))
+	if !strings.Contains(rec.Body.String(), "no kubeconfig") {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+
+	// Успешный снапшот с interval; контекст отменён — хендлер завершается.
+	getContextsFn = func() ([]string, error) { return []string{"c1"}, nil }
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		return []byte(`{"items":[{"metadata":{"namespace":"prod"},"type":"Warning","reason":"R","message":"m","involvedObject":{"kind":"Pod","name":"p"}}]}`), nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec = httptest.NewRecorder()
+	handleEvents(rec, httptest.NewRequest(http.MethodGet, "/events?interval=1", nil).WithContext(ctx))
+	if !strings.Contains(rec.Body.String(), `"reason":"R"`) {
+		t.Errorf("snapshot body = %q", rec.Body.String())
+	}
+}
+
+func TestTrimToJSON(t *testing.T) {
+	if got := trimToJSON([]byte("no json here")); string(got) != "no json here" {
+		t.Errorf("trimToJSON(no brace) = %q", got)
+	}
+	if got := trimToJSON([]byte("warn: x\n{\"a\":1}")); string(got) != `{"a":1}` {
+		t.Errorf("trimToJSON(prefix) = %q", got)
+	}
+	if got := trimToJSON([]byte(`{"a":1}`)); string(got) != `{"a":1}` {
+		t.Errorf("trimToJSON(json) = %q", got)
+	}
+}
+
+func TestWriteJSONError(t *testing.T) {
+	oldOut := log.Writer()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldOut)
+
+	rec := httptest.NewRecorder()
+	writeJSON(rec, make(chan int)) // канал не сериализуется → ветка ошибки
+	if !strings.Contains(buf.String(), "json encode response") {
+		t.Errorf("ожидался лог ошибки encode, got %q", buf.String())
+	}
+}
+
+func TestAuthSetupTTLFallback(t *testing.T) {
+	old := getenv
+	defer func() {
+		getenv = old
+		authEnabled = false
+		authUser, authPass = "", ""
+		authTTL = defaultAuthTTL
+		authSecret = nil
+	}()
+	getenv = func(k string) string {
+		switch k {
+		case "CB_AUTH_USERNAME":
+			return "admin"
+		case "CB_AUTH_PASSWORD":
+			return "pw"
+		case "CB_AUTH_CACHE":
+			return "0" // недопустимый TTL → fallback на default
+		}
+		return ""
+	}
+	authSetup()
+	if authTTL != defaultAuthTTL {
+		t.Errorf("authTTL = %v, want default %v", authTTL, defaultAuthTTL)
+	}
+	if !authEnabled || len(authSecret) == 0 {
+		t.Errorf("auth не включён или secret пуст: enabled=%v secret=%d", authEnabled, len(authSecret))
+	}
+}
+
+func TestHandleIndexAndLoginWriteError(t *testing.T) {
+	oldCtx, oldRun := getContextsFn, runKubectlFn
+	getContextsFn = func() ([]string, error) { return nil, nil }
+	runKubectlFn = func(args ...string) ([]byte, error) { return []byte(`{"items":[]}`), nil }
+	defer func() { getContextsFn, runKubectlFn = oldCtx, oldRun }()
+
+	flushDataCache()
+	handleIndex(&failWriter{}, httptest.NewRequest(http.MethodGet, "/", nil))
+	flushDataCache()
+	handleAPI(&failWriter{}, httptest.NewRequest(http.MethodGet, "/api/pods", nil))
+	writeLoginPage(&failWriter{}, "err")
+}
+
+// failWriter — ResponseWriter, чьи Write всегда падают (проверка ветки логирования).
+type failWriter struct{ hdr http.Header }
+
+func (f *failWriter) Header() http.Header {
+	if f.hdr == nil {
+		f.hdr = http.Header{}
+	}
+	return f.hdr
+}
+func (f *failWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("write fail") }
+func (f *failWriter) WriteHeader(int)           {}
+
+func TestObjCatAndCatRank(t *testing.T) {
+	cases := map[string]string{
+		"deployment": "Workload", "statefulset": "Workload", "pod": "Workload",
+		"service": "Network", "ingress": "Network", "networkpolicy": "Network",
+		"configmap": "Config", "secret": "Secret",
+		"persistentvolumeclaim": "Storage", "storageclass": "Storage",
+		"role": "RBAC", "clusterrolebinding": "RBAC",
+		"namespace": "Cluster", "node": "Cluster",
+		// Новые scope-типы не имеют отдельной категории — попадают в Other.
+		"horizontalpodautoscaler": "Other", "verticalpodautoscaler": "Other",
+		"resourcequota": "Other", "limitrange": "Other", "": "Other",
+	}
+	for kind, want := range cases {
+		if got := objCat(kind); got != want {
+			t.Errorf("objCat(%q) = %q, want %q", kind, got, want)
+		}
+	}
+	if got := catRank("Workload"); got != 0 {
+		t.Errorf("catRank(Workload) = %d, want 0", got)
+	}
+	if got := catRank("Other"); got != len(catOrder)-1 {
+		t.Errorf("catRank(Other) = %d, want %d", got, len(catOrder)-1)
+	}
+	if got := catRank("Bogus"); got != len(catOrder) {
+		t.Errorf("catRank(Bogus) = %d, want %d", got, len(catOrder))
+	}
+}
+
+func TestPhaseStateBadges(t *testing.T) {
+	phases := map[string]string{
+		"Running": "ok", "Succeeded": "ok", "Pending": "warn",
+		"Failed": "err", "Unknown": "err", "": "unk", "Weird": "unk",
+	}
+	for p, want := range phases {
+		if got := phaseBadge(p); got != want {
+			t.Errorf("phaseBadge(%q) = %q, want %q", p, got, want)
+		}
+	}
+	states := map[string]string{
+		"Running": "ok", "Succeeded": "ok", "Terminated:Completed": "ok",
+		"Waiting:CrashLoopBackOff": "warn", "Waiting": "warn", "Pending": "warn",
+		"Terminated:Error": "err", "Terminated": "err", "": "unk", "Other": "unk",
+	}
+	for s, want := range states {
+		if got := stateBadge(s); got != want {
+			t.Errorf("stateBadge(%q) = %q, want %q", s, got, want)
+		}
+	}
+}
+
+func TestContainerStateJSON(t *testing.T) {
+	var running csiState
+	running.Running = &struct {
+		StartedAt string `json:"startedAt"`
+	}{}
+	if got := containerStateJSON(running); got != "Running" {
+		t.Errorf("running = %q, want Running", got)
+	}
+
+	var waiting csiState
+	waiting.Waiting = &struct {
+		Reason string `json:"reason"`
+	}{Reason: "CrashLoopBackOff"}
+	if got := containerStateJSON(waiting); got != "Waiting:CrashLoopBackOff" {
+		t.Errorf("waiting = %q", got)
+	}
+
+	var waitingNoReason csiState
+	waitingNoReason.Waiting = &struct {
+		Reason string `json:"reason"`
+	}{}
+	if got := containerStateJSON(waitingNoReason); got != "Waiting" {
+		t.Errorf("waiting no reason = %q", got)
+	}
+
+	var term csiState
+	term.Terminated = &struct {
+		Reason string `json:"reason"`
+	}{Reason: "Completed"}
+	if got := containerStateJSON(term); got != "Terminated:Completed" {
+		t.Errorf("terminated = %q", got)
+	}
+
+	var termNoReason csiState
+	termNoReason.Terminated = &struct {
+		Reason string `json:"reason"`
+	}{}
+	if got := containerStateJSON(termNoReason); got != "Terminated" {
+		t.Errorf("terminated no reason = %q", got)
+	}
+
+	if got := containerStateJSON(csiState{}); got != "Pending" {
+		t.Errorf("empty = %q, want Pending", got)
+	}
+}
+
+func TestShortOutput(t *testing.T) {
+	if got := shortOutput(nil); got != "no output" {
+		t.Errorf("shortOutput(nil) = %q", got)
+	}
+	if got := shortOutput([]byte("  hi \n")); got != "hi" {
+		t.Errorf("shortOutput(hi) = %q", got)
+	}
+	long := strings.Repeat("a", 400)
+	got := shortOutput([]byte(long))
+	if len(got) != 300+len("…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("shortOutput(long) len = %d, suffix ok = %v", len(got), strings.HasSuffix(got, "…"))
+	}
+}
+
+func TestParseRFC3339AndAgeCreated(t *testing.T) {
+	if got := parseRFC3339(""); !got.IsZero() {
+		t.Errorf("parseRFC3339(empty) = %v, want zero", got)
+	}
+	if got := parseRFC3339("not-a-time"); !got.IsZero() {
+		t.Errorf("parseRFC3339(bad) = %v, want zero", got)
+	}
+	ts := parseRFC3339("2024-01-05T10:20:30Z")
+	if ts.IsZero() || ts.Year() != 2024 {
+		t.Errorf("parseRFC3339(valid) = %v", ts)
+	}
+	if got := ageCreated(""); got != "" {
+		t.Errorf("ageCreated(empty) = %q", got)
+	}
+	if got := ageCreated("not-a-time"); got != "" {
+		t.Errorf("ageCreated(bad) = %q", got)
+	}
+	if got := ageCreated("2024-01-05T10:20:30Z"); got == "" {
+		t.Errorf("ageCreated(valid) empty")
+	}
+}
+
+func TestYamlQuote(t *testing.T) {
+	if got := yamlQuote(""); got != `""` {
+		t.Errorf("yamlQuote(empty) = %q", got)
+	}
+	if got := yamlQuote("a b"); got != `"a b"` {
+		t.Errorf("yamlQuote(a b) = %q", got)
+	}
+	if got := yamlQuote(`a"b`); got != `"a\"b"` {
+		t.Errorf("yamlQuote(quote) = %q", got)
+	}
+}
+
+func TestHelmReleaseName(t *testing.T) {
+	cases := map[string]string{
+		"sh.helm.release.v1.myapp.v3": "myapp",
+		"sh.helm.release.v1.myapp":    "myapp",
+		"not-a-helm-secret":           "not-a-helm-secret",
+		"":                            "",
+	}
+	for in, want := range cases {
+		if got := helmReleaseName(in); got != want {
+			t.Errorf("helmReleaseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNetworksByContextNSAndEventsByContext(t *testing.T) {
+	oldRun := runKubectlFn
+	defer func() { runKubectlFn = oldRun }()
+
+	runKubectlFn = func(args ...string) ([]byte, error) {
+		j := strings.Join(args, " ")
+		switch {
+		case strings.Contains(j, "api-resources"):
+			return []byte(""), nil
+		case strings.Contains(j, " get services,ingresses,networkpolicies,endpoints,endpointslices "):
+			return []byte(`{"items":[
+				{"kind":"ServiceList","items":[{"metadata":{"name":"svc1","namespace":"ns1"}}]},
+				{"kind":"IngressList","items":[{"metadata":{"name":"ing1","namespace":"ns2"}}]},
+				{"kind":"NetworkPolicyList","items":[{"metadata":{"name":"np1","namespace":"ns1"}}]}
+			]}`), nil
+		case strings.Contains(j, " get events "):
+			return []byte(`{"items":[
+				{"metadata":{"namespace":"ns1"},"type":"Warning","reason":"R","message":"m"},
+				{"metadata":{"namespace":"ns1"},"type":"Normal","reason":"R","message":"m"},
+				{"metadata":{"namespace":"ns2"},"type":"Warning","reason":"R","message":"m"}
+			]}`), nil
+		}
+		return nil, fmt.Errorf("unexpected: %s", j)
+	}
+
+	net := networksByContextNS("c1")
+	if len(net) != 2 || net["ns1"] != 1 || net["ns2"] != 1 {
+		t.Errorf("networksByContextNS = %v, want ns1:1 ns2:1", net)
+	}
+	if got := eventsByContext("c1"); got != 2 {
+		t.Errorf("eventsByContext = %d, want 2 (только Warning)", got)
+	}
+}
+
+func TestHandleLogout(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	handleLogout(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Errorf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != authLoginURL {
+		t.Errorf("Location = %q, want %q", loc, authLoginURL)
+	}
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == authCookie {
+			found = true
+			if c.Value != "" || c.MaxAge != -1 {
+				t.Errorf("cookie = %+v, want empty value and MaxAge -1", c)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("cookie %q not cleared", authCookie)
 	}
 }

@@ -126,58 +126,62 @@ type Pod struct {
 }
 
 type Stats struct {
-	Contexts      int    `json:"total"`
-	AvailCtx      int    `json:"avail"`
-	Namespaces    int    `json:"namespaces"`
-	Pods          int    `json:"pods"`
-	PodsRunning   int    `json:"podsRunning"`
-	Containers    int    `json:"containers"`
-	Running       int    `json:"running"`
-	Networks      int    `json:"networks"` // network-ресурсы во всех кластерах (Service, Ingress, NetworkPolicy, Endpoints)
-	Services      int    `json:"services"` // только Service во всех кластерах (карточка Service)
-	Jobs          int    `json:"jobs"`     // jobs + cronjobs во всех кластерах
-	JobsDone      int    `json:"jobsDone"` // успешно завершённые Job (succeeded>0, failed=0)
-	Configs       int    `json:"configs"`  // configmaps + secrets во всех кластерах
-	Charts        int    `json:"charts"`   // helm-релизы во всех кластерах
-	NodeReady     int    `json:"nodeReady"`
-	NodeTotal     int    `json:"nodeTotal"`
-	CpuMilli      int64  `json:"cpuMilli"`
-	MemBytes      int64  `json:"memBytes"`
-	CpuLimitMilli int64  `json:"cpuLimitMilli"` // суммарные hard-лимиты CPU всех контейнеров, м-ядра
-	MemLimitBytes int64  `json:"memLimitBytes"` // суммарные hard-лимиты памяти всех контейнеров, байты
-	CpuTotalMilli int64  `json:"cpuTotal"`
-	MemTotalBytes int64  `json:"memTotal"`
-	PVCBound      int
-	PVCTotal      int
-	PVCBoundBytes int64
-	PVCTotalBytes int64
-	PVTotalBytes  int64 // суммарная ёмкость всех PV во всех кластерах, байты
-	PVCOk         int
+	Contexts       int   `json:"total"`
+	AvailCtx       int   `json:"avail"`
+	Namespaces     int   `json:"namespaces"`
+	Pods           int   `json:"pods"`
+	PodsRunning    int   `json:"podsRunning"`
+	Containers     int   `json:"containers"`
+	Running        int   `json:"running"`
+	Networks       int   `json:"networks"` // network-ресурсы во всех кластерах (Service, Ingress, NetworkPolicy, Endpoints)
+	Services       int   `json:"services"` // только Service во всех кластерах (карточка Service)
+	Jobs           int   `json:"jobs"`     // jobs + cronjobs во всех кластерах
+	JobsDone       int   `json:"jobsDone"` // успешно завершённые Job (succeeded>0, failed=0)
+	Configs        int   `json:"configs"`  // configmaps + secrets во всех кластерах (для совместимости)
+	ConfigMaps     int   `json:"configMaps"`
+	Secrets        int   `json:"secrets"`
+	Charts         int   `json:"charts"` // helm-релизы во всех кластерах
+	NodeReady      int   `json:"nodeReady"`
+	NodeTotal      int   `json:"nodeTotal"`
+	CpuMilli       int64 `json:"cpuMilli"`
+	MemBytes       int64 `json:"memBytes"`
+	CpuLimitMilli  int64 `json:"cpuLimitMilli"` // суммарные hard-лимиты CPU всех контейнеров, м-ядра
+	MemLimitBytes  int64 `json:"memLimitBytes"` // суммарные hard-лимиты памяти всех контейнеров, байты
+	CpuTotalMilli  int64 `json:"cpuTotal"`
+	MemTotalBytes  int64 `json:"memTotal"`
+	PVCBound       int
+	PVCTotal       int
+	PVCBoundBytes  int64
+	PVCTotalBytes  int64
+	PVTotalBytes   int64 // суммарная ёмкость всех PV во всех кластерах, байты
+	PVCOk          int
 	StorageClasses int // объекты StorageClass во всех кластерах (cluster-scoped)
-	EventsWarning int // события type=Warning во всех кластерах
+	EventsWarning  int // события type=Warning во всех кластерах
 }
 
 // NSStats — те же счётчики ресурсов, но по (ctx, namespace). Ключ — "ctx|ns".
 // Нужны клиенту, чтобы сворачивать карточки Jobs/Networks/Configs/PV-PVC/Events
 // при клиентском фильтре по ноде/пространству.
 type NSStats struct {
-	Networks      int
-	Services      int
-	Jobs          int
-	JobsDone      int
-	Configs       int
-	Charts        int
-	EventsWarning int
-	PVCBound      int
-	PVCTotal      int
-PVCBoundBytes int64
-	PVCTotalBytes int64
-	PVTotalBytes  int64 // суммарная ёмкость всех PV в кластере, байты (кладётся на "ctx|cluster")
-	PVCOk         int    // 1, если в этом ctx листинг PVC реально удался
-	StorageClasses int // StorageClass (cluster-scoped): кладётся на ключ "ctx|cluster"
-	NodeReady     int
-	NodeTotal     int
-	NodeOk        int // 1, если листинг Node в этом ctx реально удался
+	Networks       int
+	Services       int
+	Jobs           int
+	JobsDone       int
+	Configs        int
+	ConfigMaps     int
+	Secrets        int
+	Charts         int
+	EventsWarning  int
+	PVCBound       int
+	PVCTotal       int
+	PVCBoundBytes  int64
+	PVCTotalBytes  int64
+	PVTotalBytes   int64 // суммарная ёмкость всех PV в кластере, байты (кладётся на "ctx|cluster")
+	PVCOk          int   // 1, если в этом ctx листинг PVC реально удался
+	StorageClasses int   // StorageClass (cluster-scoped): кладётся на ключ "ctx|cluster"
+	NodeReady      int
+	NodeTotal      int
+	NodeOk         int // 1, если листинг Node в этом ctx реально удался
 }
 
 type Card struct {
@@ -191,19 +195,19 @@ type Card struct {
 // PageData — данные, которые получает шаблон и /api/pods.
 // Имена JSON-полей обязаны совпадать с тем, что использует клиентский JS.
 type PageData struct {
-	Pods       []Pod             `json:"pods"`
-	Contexts   []string          `json:"contexts"`
-	Namespaces []string          `json:"namespaces"`
-	Nodes      []string          `json:"nodes"`
-	Phases     []string          `json:"phases"`
-	States     []string          `json:"states"`
-	Stats      Stats             `json:"stats"`
+	Pods       []Pod              `json:"pods"`
+	Contexts   []string           `json:"contexts"`
+	Namespaces []string           `json:"namespaces"`
+	Nodes      []string           `json:"nodes"`
+	Phases     []string           `json:"phases"`
+	States     []string           `json:"states"`
+	Stats      Stats              `json:"stats"`
 	NS         map[string]NSStats `json:"ns"`
-	NSJSON     template.JS       `json:"-"` // NS, подготовленный для вставки в <script>
-	Cards      []Card            `json:"cards"`
-	Count      int               `json:"count"`
-	Generated  time.Time         `json:"generated"`
-	Error      string            `json:"error"`
+	NSJSON     template.JS        `json:"-"` // NS, подготовленный для вставки в <script>
+	Cards      []Card             `json:"cards"`
+	Count      int                `json:"count"`
+	Generated  time.Time          `json:"generated"`
+	Error      string             `json:"error"`
 	// AuthRequired — требуется показать форму логина вместо дашборда.
 	AuthRequired bool `json:"-"`
 	// AuthError — текст ошибки авторизации (выводится в форме логина).
@@ -415,31 +419,33 @@ var (
 
 // Overview — результат одного прохода по всем контекстам.
 type Overview struct {
-	Pods          []Pod
-	Error         string
-	AvailCtx      int // контексты, где успешно получены поды
-	TotalCtx      int
-	NodeReady     int
-	NodeTotal     int
-	CpuMilli      int64 // суммарное использование CPU, м-ядра
-	MemBytes      int64 // суммарное использование памяти, байты
-	CpuTotalMilli int64 // суммарные allocatable CPU, м-ядра
-	MemTotalBytes int64 // суммарные allocatable памяти, байты
-	PVCBound      int   // PVC в фазе Bound (привязаны к PV)
-	PVCTotal      int   // всего PVC
-	PVCBoundBytes int64 // сумма ёмкости, выделенной PV из Bound PVC, байты
-	PVCTotalBytes int64 // суммарная запрошенная ёмкость всех PVC, байты
-	PVTotalBytes  int64 // суммарная ёмкость всех PV, байты
-	PVCOk         int   // контексты, где листинг PVC завершился успешно
-	StorageClasses int  // суммарное число StorageClass по кластерам
-	Networks      int   // суммарное число сетевых ресурсов (Service/Ingress/NetworkPolicy/Endpoints/EndpointSlice)
-	Services      int   // суммарное число Service
-	Jobs          int   // суммарное число Jobs + CronJobs
-	JobsDone      int   // суммарное число успешно завершённых Job
-	Configs       int   // суммарное число ConfigMap + Secret
-	Charts        int   // суммарное число helm-релизов
-	EventsWarning int   // события type=Warning во всех кластерах
-	NS            map[string]NSStats // разбивка по "ctx|ns" для клиентских фильтров
+	Pods           []Pod
+	Error          string
+	AvailCtx       int // контексты, где успешно получены поды
+	TotalCtx       int
+	NodeReady      int
+	NodeTotal      int
+	CpuMilli       int64              // суммарное использование CPU, м-ядра
+	MemBytes       int64              // суммарное использование памяти, байты
+	CpuTotalMilli  int64              // суммарные allocatable CPU, м-ядра
+	MemTotalBytes  int64              // суммарные allocatable памяти, байты
+	PVCBound       int                // PVC в фазе Bound (привязаны к PV)
+	PVCTotal       int                // всего PVC
+	PVCBoundBytes  int64              // сумма ёмкости, выделенной PV из Bound PVC, байты
+	PVCTotalBytes  int64              // суммарная запрошенная ёмкость всех PVC, байты
+	PVTotalBytes   int64              // суммарная ёмкость всех PV, байты
+	PVCOk          int                // контексты, где листинг PVC завершился успешно
+	StorageClasses int                // суммарное число StorageClass по кластерам
+	Networks       int                // суммарное число сетевых ресурсов (Service/Ingress/NetworkPolicy/Endpoints/EndpointSlice)
+	Services       int                // суммарное число Service
+	Jobs           int                // суммарное число Jobs + CronJobs
+	JobsDone       int                // суммарное число успешно завершённых Job
+	Configs        int                // суммарное число ConfigMap + Secret
+	ConfigMaps     int                // суммарное число ConfigMap
+	Secrets        int                // суммарное число Secret
+	Charts         int                // суммарное число helm-релизов
+	EventsWarning  int                // события type=Warning во всех кластерах
+	NS             map[string]NSStats // разбивка по "ctx|ns" для клиентских фильтров
 }
 
 // kubectlSem ограничивает число одновременно работающих kubectl-процессов.
@@ -548,18 +554,22 @@ func fetchAllReal() Overview {
 				nout, nerr := podsForContextNS(ctx, ns)
 				if nerr != nil {
 					mu.Lock()
-					errs = append(errs, fmt.Sprintf("context %q: all-namespaces: %s; fallback namespace %q: %s",
-						ctx, shortOutput(out), ns, shortOutput(nout)))
+					msg := fmt.Sprintf("context %q: all-namespaces: %s; fallback namespace %q: %s",
+						ctx, shortOutput(out), ns, shortOutput(nout))
+					errs = append(errs, msg)
 					mu.Unlock()
+					log.Printf("gather: %s", msg)
 					return
 				}
 				out = nout
 			}
 			parsed, perr := parsePodList(ctx, out, usage, mounted)
 			if perr != nil {
+				msg := fmt.Sprintf("context %q: %v", ctx, perr)
 				mu.Lock()
-				errs = append(errs, fmt.Sprintf("context %q: %v", ctx, perr))
+				errs = append(errs, msg)
 				mu.Unlock()
+				log.Printf("gather: %s", msg)
 				return
 			}
 			// Резолвим верхнеуровневый Workload (ReplicaSet -> Deployment и
@@ -577,7 +587,8 @@ func fetchAllReal() Overview {
 			// затем разбивка по категориям внутри.
 			byKind := countKindsByKindNS(ctx, append(scopeKinds("jobs"), scopeKinds("configs")...))
 			jobNS := mergeKindsNS(filterKinds(byKind, "job", "cronjob"))
-			cfgNS := mergeKindsNS(filterKinds(byKind, "configmap", "secret"))
+			cmNS := mergeKindsNS(filterKinds(byKind, "configmap"))
+			secNS := mergeKindsNS(filterKinds(byKind, "secret"))
 			evNS := eventsByContextNS(ctx)
 			nsStats := make(map[string]NSStats)
 			addNS := func(ns string, fn func(*NSStats)) {
@@ -624,8 +635,11 @@ func fetchAllReal() Overview {
 			for ns, v := range jobNS {
 				addNS(ns, func(s *NSStats) { s.Jobs += v.total; s.JobsDone += v.done })
 			}
-			for ns, v := range cfgNS {
-				addNS(ns, func(s *NSStats) { s.Configs += v.total })
+			for ns, v := range cmNS {
+				addNS(ns, func(s *NSStats) { s.ConfigMaps += v.total })
+			}
+			for ns, v := range secNS {
+				addNS(ns, func(s *NSStats) { s.Secrets += v.total })
 			}
 			for ns, v := range evNS {
 				addNS(ns, func(s *NSStats) { s.EventsWarning += v })
@@ -664,8 +678,13 @@ func fetchAllReal() Overview {
 				ov.Jobs += v.total
 				ov.JobsDone += v.done
 			}
-			for _, v := range cfgNS {
+			for _, v := range cmNS {
 				ov.Configs += v.total
+				ov.ConfigMaps += v.total
+			}
+			for _, v := range secNS {
+				ov.Configs += v.total
+				ov.Secrets += v.total
 			}
 			for _, v := range evNS {
 				ov.EventsWarning += v
@@ -682,6 +701,8 @@ func fetchAllReal() Overview {
 				cur.Jobs += v.Jobs
 				cur.JobsDone += v.JobsDone
 				cur.Configs += v.Configs
+				cur.ConfigMaps += v.ConfigMaps
+				cur.Secrets += v.Secrets
 				cur.Charts += v.Charts
 				cur.EventsWarning += v.EventsWarning
 				cur.PVCBound += v.PVCBound
@@ -796,10 +817,10 @@ type kubectlPVCList struct {
 }
 
 type nsPVC struct {
-	bound, total    int
-	boundBytes      int64
-	totalBytes      int64
-	listed          bool
+	bound, total int
+	boundBytes   int64
+	totalBytes   int64
+	listed       bool
 }
 
 // pvcByContextNS перечисляет PVC в кластере по namespace. Для Bound берётся
@@ -1277,8 +1298,42 @@ func scopeKinds(scope string) []kubeKind {
 			{"persistentvolume", "persistentvolumes", "Storage"},
 			{"storageclass", "storageclasses", "Storage"},
 		}
+	case "quota":
+		return []kubeKind{
+			{"resourcequota", "resourcequotas", "Cluster"},
+			{"limitrange", "limitranges", "Cluster"},
+		}
+	case "autoscale":
+		// VPA — CRD (autoscaling.k8s.io), может отсутствовать; HPA встроен.
+		// Присутствие VPA проверяется в autoscaleScopeKinds.
+		return []kubeKind{
+			{"horizontalpodautoscaler", "horizontalpodautoscalers", "Workload"},
+		}
 	}
 	return nil
+}
+
+// autoscaleScopeKinds — HPA (всегда) + VPA (CRD autoscaling.k8s.io), если он
+// установлен в кластере. Иначе kubectl get hpa,vpa упадёт целиком при
+// отсутствии CRD. При любой ошибке api-resources — только HPA.
+//
+// kubectl api-resources -o name отдаёт имена с API-группой
+// («verticalpodautoscalers.autoscaling.k8s.io»), поэтому сравниваем по префиксу,
+// а не по точному равенству.
+func autoscaleScopeKinds(ctx string) []kubeKind {
+	kinds := scopeKinds("autoscale")
+	out, err := runKubectlFn("--context", ctx, "api-resources", "-o", "name")
+	if err != nil {
+		return kinds
+	}
+	for _, line := range splitLines(string(out)) {
+		name := strings.TrimSpace(line)
+		if name == "verticalpodautoscalers" || strings.HasPrefix(name, "verticalpodautoscalers.") {
+			kinds = append(kinds, kubeKind{kind: "verticalpodautoscaler", plural: "verticalpodautoscalers", cat: "Workload"})
+			break
+		}
+	}
+	return kinds
 }
 
 // egressKinds находит egress-политики (EgressFirewall, EgressNetworkPolicy и
@@ -1385,8 +1440,8 @@ func countKindsByKindNS(ctx string, ks []kubeKind) map[string]map[string]nsKinds
 	}
 	for _, raw := range ml.Items {
 		var sub struct {
-			Kind  string             `json:"kind"`
-			Items []json.RawMessage  `json:"items"`
+			Kind  string            `json:"kind"`
+			Items []json.RawMessage `json:"items"`
 		}
 		if json.Unmarshal(raw, &sub) != nil {
 			continue
@@ -1893,11 +1948,11 @@ func buildCards(st Stats) []Card {
 		{Label: "Containers", Value: frac(st.Running, st.Containers), Hint: "running / active containers (excl. finished jobs)", Color: "ok", Scope: "workloads"},
 		{Label: "Jobs", Value: frac(st.JobsDone, st.Jobs), Hint: "succeeded jobs / total (jobs + cronjobs)", Color: "ok", Scope: "jobs"},
 		{Label: "Charts", Value: strconv.Itoa(st.Charts), Hint: "helm releases across clusters", Color: "blue", Scope: "charts"},
-		{Label: "Service", Value: strconv.Itoa(st.Services), Hint: "services across clusters (click for full list including Ingress, NetworkPolicy, Endpoints)", Color: "blue", Scope: "svc"},
-		{Label: "Configs", Value: strconv.Itoa(st.Configs), Hint: "configmaps + secrets across clusters", Color: "blue", Scope: "configs"},
+		{Label: "Services", Value: strconv.Itoa(st.Services), Hint: "services across clusters (click for full list including Ingress, NetworkPolicy, Endpoints)", Color: "blue", Scope: "svc"},
+		{Label: "Configs", Value: strconv.Itoa(st.ConfigMaps) + "/" + strconv.Itoa(st.Secrets), Hint: "configmaps + secrets across clusters", Color: "blue", Scope: "configs"},
 		{Label: "Events", Value: strconv.Itoa(st.EventsWarning), Hint: "events with type=Warning across clusters", Color: "amber", Scope: "events"},
-		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable", Color: "teal"},
-		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable", Color: "teal"},
+		{Label: "CPU", Value: coresFrac(st.CpuMilli, st.CpuTotalMilli), Hint: "cores in use / allocatable (click for HPA/VPA manifests)", Color: "teal", Scope: "autoscale"},
+		{Label: "Memory", Value: gibFrac(st.MemBytes, st.MemTotalBytes) + " GiB", Hint: "GiB in use / allocatable (click for quotas and limit ranges)", Color: "teal", Scope: "quota"},
 		{Label: "Limits", Value: fmt.Sprintf("%.2f/%.2f GiB", float64(st.CpuLimitMilli)/1000, float64(st.MemLimitBytes)/(1<<30)), Hint: "sum of hard limits across containers: CPU cores / MEMORY GiB (click to list manifests)", Color: "amber", Scope: "limits"},
 		{Label: "PVC/PV size", Value: gibFrac(st.PVCTotalBytes, st.PVTotalBytes) + " GiB", Hint: "sum of PVC requests / total PV capacity", Color: "sky", Scope: "pvc"},
 		{Label: "PVC/PV Count", Value: pvPvcValue(st), Hint: "bound PVC / total PVC (PV, PersistentVolumeClaim, StorageClass)", Color: "sky", Scope: "pvc"},
@@ -2291,7 +2346,7 @@ type dataCache struct {
 // каждый раз выполняется заново), но single-flight для одновременных вызовов
 // сохраняется.
 func (c *dataCache) get(fetch func() *PageData) (data *PageData) {
-	data, _, _ = c.view(fetch, nil)
+	data, _, _ = c.viewWith(fetch, nil, false)
 	return data
 }
 
@@ -2299,8 +2354,21 @@ func (c *dataCache) get(fetch func() *PageData) (data *PageData) {
 // render вызывается только при cache miss (или ttl<=0) и хранится до следующего
 // обновления данных; при render==nil кешируются только сами данные.
 func (c *dataCache) view(fetch func() *PageData, render func(*PageData) ([]byte, []byte)) (data *PageData, htmlBytes, jsonBytes []byte) {
+	return c.viewWith(fetch, render, false)
+}
+
+// viewFresh — принудительное обновление данных (fresh=true): пропускает «свежий»
+// кеш, даже если age < ttl. Используется клиентом автообновления (?refresh=1),
+// чтобы интервал страницы точно совпадал с реальной каденцией сбора. Полностью
+// сохраняет single-flight: параллельные вызовы ждут первый и получают его
+// результат, поэтому одновременные запросы не дублируют сбор.
+func (c *dataCache) viewFresh(fetch func() *PageData, render func(*PageData) ([]byte, []byte)) (data *PageData, htmlBytes, jsonBytes []byte) {
+	return c.viewWith(fetch, render, true)
+}
+
+func (c *dataCache) viewWith(fetch func() *PageData, render func(*PageData) ([]byte, []byte), fresh bool) (data *PageData, htmlBytes, jsonBytes []byte) {
 	c.mu.Lock()
-	if c.ttl > 0 && c.data != nil && c.now().Sub(c.stamp) < c.ttl {
+	if !fresh && c.ttl > 0 && c.data != nil && c.now().Sub(c.stamp) < c.ttl {
 		// данные могли прийти из get() без отрисовки — тогда байтов нет.
 		stale := render != nil && c.htmlBytes == nil
 		if !stale {
@@ -2332,6 +2400,7 @@ func (c *dataCache) view(fetch func() *PageData, render func(*PageData) ([]byte,
 	// заблокируются на <-f.done.
 	defer func() {
 		if r := recover(); r != nil {
+			log.Printf("recover during gather: %v", r)
 			data = &PageData{Error: fmt.Sprintf("internal error while gathering data: %v", r)}
 			f.data = data
 			c.mu.Lock()
@@ -2384,10 +2453,20 @@ func newDataCache(ttl time.Duration) *dataCache {
 // renderCacheView кеширует отрендеренные html+json байты рядом с данными;
 // fetch выполняется только при cache miss, рендер — один раз на снимок.
 func renderCacheView(fetch func() *PageData, render func(*PageData) ([]byte, []byte)) (html, json []byte) {
+	return renderCacheViewFresh(fetch, render, false)
+}
+
+// renderCacheViewFresh — как renderCacheView, но при fresh=true в обход
+// «свежего» кеша (для /api/pods?refresh=1 автообновления страницы).
+func renderCacheViewFresh(fetch func() *PageData, render func(*PageData) ([]byte, []byte), fresh bool) (html, json []byte) {
 	cacheMu.Lock()
 	c := overviewCache
 	cacheMu.Unlock()
-	_, html, json = c.view(fetch, render)
+	if fresh {
+		_, html, json = c.viewFresh(fetch, render)
+	} else {
+		_, html, json = c.view(fetch, render)
+	}
 	return html, json
 }
 
@@ -2408,10 +2487,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
-	_, json := renderCacheView(func() *PageData {
+	_, json := renderCacheViewFresh(func() *PageData {
 		data := gatherData()
 		return &data
-	}, renderPage)
+	}, renderPage, r.URL.Query().Get("refresh") != "")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if _, err := w.Write(json); err != nil {
 		log.Printf("api write: %v", err)
@@ -2469,7 +2548,7 @@ func authToken(u string, ttl time.Duration) string {
 	mac := hmac.New(sha256.New, authSecret)
 	mac.Write([]byte(payload))
 	sig := hex.EncodeToString(mac.Sum(nil))
-	return base64.RawURLEncoding.EncodeToString([]byte(payload+"|"+sig))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload + "|" + sig))
 }
 
 // authValid проверяет подпись и срок действия токена сессии.
@@ -2600,7 +2679,7 @@ func authHandler(next http.Handler) http.Handler {
 			return
 		}
 		// API без авторизации — 401, HTML — форма логина.
-		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/logs" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/logs" || r.URL.Path == "/events" {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -2636,6 +2715,8 @@ func gatherData() PageData {
 	st.Jobs = ov.Jobs
 	st.JobsDone = ov.JobsDone
 	st.Configs = ov.Configs
+	st.ConfigMaps = ov.ConfigMaps
+	st.Secrets = ov.Secrets
 	st.Charts = ov.Charts
 	st.EventsWarning = ov.EventsWarning
 	nsJSON := template.JS("{}")
@@ -3096,35 +3177,8 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 			}(c, kind, plural, cat)
 		}
 	case "events":
-		var kind, cat = "event", "Event"
-		for _, c := range ctxs {
-			wg.Add(1)
-			go func(c string) {
-				defer wg.Done()
-				out, e := runKubectlFn("--context", c, "get", "events", "-A", "-o", "json")
-				if e != nil {
-					mu.Lock()
-					refs = append(refs, ObjRef{Kind: kind, Ctx: c, Reason: "RBAC/error"})
-					mu.Unlock()
-					return
-				}
-				var list struct {
-					Items []kubectlEvent `json:"items"`
-				}
-				if json.Unmarshal(trimToJSON(out), &list) != nil {
-					return
-				}
-				for _, ev := range list.Items {
-					add(ObjRef{
-						Kind: kind, Name: ev.Metadata.Namespace + "/" + ev.InvolvedObject.Kind + "/" + ev.InvolvedObject.Name,
-						Cat: cat, Reason: ev.Reason, Type: ev.Type, Message: ev.Message,
-						Ctx: c, Ns: ev.Metadata.Namespace,
-						Age: ageTime(parseRFC3339(ev.LastTimestamp)),
-					})
-				}
-			}(c)
-		}
-	case "jobs", "configs", "workloads", "svc", "pvc":
+		refs = collectEvents(ctxs)
+	case "jobs", "configs", "workloads", "svc", "pvc", "quota", "autoscale":
 		for _, c := range ctxs {
 			wg.Add(1)
 			go func(c string) {
@@ -3135,6 +3189,9 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 				}
 				if scope == "svc" {
 					kinds = append(kinds, egressKinds(c)...)
+				}
+				if scope == "autoscale" {
+					kinds = autoscaleScopeKinds(c)
 				}
 				if len(kinds) == 0 {
 					return
@@ -3251,6 +3308,129 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 	})
 	resp.Items = refs
 	writeJSON(w, resp)
+}
+
+// collectEvents возвращает события кластеров (get events -A -o json) в форме
+// []ObjRef. Используется и одноразовым /api/overview?scope=events, и потоковым
+// /events: чтобы клиент и снапшот, и ленту видел в одном формате.
+func collectEvents(ctxs []string) []ObjRef {
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		refs []ObjRef
+	)
+	kind, cat := "event", "Event"
+	for _, c := range ctxs {
+		wg.Add(1)
+		go func(c string) {
+			defer wg.Done()
+			out, e := runKubectlFn("--context", c, "get", "events", "-A", "-o", "json")
+			if e != nil {
+				mu.Lock()
+				refs = append(refs, ObjRef{Kind: kind, Ctx: c, Reason: "RBAC/error"})
+				mu.Unlock()
+				return
+			}
+			var list struct {
+				Items []kubectlEvent `json:"items"`
+			}
+			if json.Unmarshal(trimToJSON(out), &list) != nil {
+				return
+			}
+			for _, ev := range list.Items {
+				mu.Lock()
+				refs = append(refs, ObjRef{
+					Kind: kind, Name: ev.Metadata.Namespace + "/" + ev.InvolvedObject.Kind + "/" + ev.InvolvedObject.Name,
+					Cat: cat, Reason: ev.Reason, Type: ev.Type, Message: ev.Message,
+					Ctx: c, Ns: ev.Metadata.Namespace,
+					Age: ageTime(parseRFC3339(ev.LastTimestamp)),
+				})
+				mu.Unlock()
+			}
+		}(c)
+	}
+	wg.Wait()
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Ctx != refs[j].Ctx {
+			return refs[i].Ctx < refs[j].Ctx
+		}
+		if refs[i].Ns != refs[j].Ns {
+			return refs[i].Ns < refs[j].Ns
+		}
+		if refs[i].Name != refs[j].Name {
+			return refs[i].Name < refs[j].Name
+		}
+		return refs[i].Kind < refs[j].Kind
+	})
+	return refs
+}
+
+// handleEvents — потоковый аналог /logs для событий: периодически перечитывает
+// события всех кластеров и шлёт клиенту по SSE полный снапшот в том же формате
+// {"items":[...]}, что и /api/overview?scope=events. Такая модель «свежий список»
+// проста и сразу применима к чипам-фильтрам по кластерам/видам.
+func handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	if _, err := fmt.Fprint(w, "retry: 2000\n\n"); err != nil {
+		log.Printf("sse retry write: %v", err)
+	}
+	flusher.Flush()
+
+	ctxs, err := getContextsFn()
+	if err != nil {
+		writeJSON(w, relatedResp{Error: err.Error()})
+		return
+	}
+
+	// Подоплёка: события — это снапшот, а не линейный поток строк, поэтому после
+	// первого мгновенного кадра периодически высылаем обновлённый список. Частота
+	// не чаще раз в 5 секунд — kubectl get events не волнует прокси/шины.
+	interval := 5 * time.Second
+	if v := r.URL.Query().Get("interval"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			interval = time.Duration(n) * time.Second
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	send := func() bool {
+		items := collectEvents(ctxs)
+		b, err := json.Marshal(relatedResp{Items: items})
+		if err != nil {
+			log.Printf("sse events marshal: %v", err)
+			return true
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			log.Printf("sse events write: %v", err)
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !send() {
+		return
+	}
+	for {
+		select {
+		case <-ticker.C:
+			if !send() {
+				return
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 type relatedResp struct {
@@ -3695,6 +3875,21 @@ func handleObject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// logRequests логирует каждый входящий запрос: метод, IP:port, user-agent и
+// полный path с query. Вызывается один раз на соединение (SSE /logs, /events
+// не спамят), длинные query обрезаются, чтобы не раздувать консоль.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.RequestURI()
+		const maxQ = 200
+		if len(u) > maxQ {
+			u = u[:maxQ] + "..."
+		}
+		log.Printf("[%s] %s (%s) -> %s", r.Method, r.RemoteAddr, r.UserAgent(), u)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	authSetup()
 
@@ -3713,10 +3908,11 @@ func main() {
 	mux.HandleFunc("/api/object", handleObject)
 	mux.HandleFunc("/api/overview", handleOverview)
 	mux.HandleFunc("/logs", handleLogs)
+	mux.HandleFunc("/events", handleEvents)
 
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           authHandler(mux),
+		Handler:           logRequests(authHandler(mux)),
 		ReadHeaderTimeout: 5 * time.Second, // защита от медленного заголовка (slowloris)
 	}
 	// WriteTimeout сознательно не задаём: долгоживущее SSE-соединение /logs.
