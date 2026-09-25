@@ -1149,6 +1149,7 @@
       }
       .log-body {
         flex: 1;
+        position: relative;
         overflow-y: auto;
         padding: 8px 0;
         font-family: var(--mono);
@@ -1157,6 +1158,80 @@
         background: #070c19;
         --ctxw: 9ch;
         --podw: 16ch;
+      }
+      /* ---------- таймлайн лог-потока по timestamp ---------- */
+      /* Гистограмма объёма логов в стиле Grafana: диапазон делится на корзины,
+         высота колонки ~ число строк в ней, ошибки подсвечены красным. */
+      .tl {
+        position: relative;
+        height: 56px;
+        padding: 10px 14px 0;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        cursor: pointer;
+        user-select: none;
+        --tl0: 0;
+        --tl1: 1;
+      }
+      .tl-bins {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        top: 8px;
+        bottom: 18px;
+        display: flex;
+        align-items: flex-end;
+        gap: 1px;
+      }
+      .tl-bins .bin {
+        flex: 1 1 0;
+        min-width: 0;
+        height: 0;
+        border-radius: 1px 1px 0 0;
+        background: linear-gradient(180deg, var(--sky) 0%, rgba(56, 189, 248, 0.35) 55%, rgba(56, 189, 248, 0.12) 100%);
+      }
+      .tl-bins .bin.err {
+        background: linear-gradient(180deg, #f87171 0%, rgba(248, 113, 113, 0.45) 55%, rgba(248, 113, 113, 0.14) 100%);
+      }
+      .tl-axisbar {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 7px;
+        height: 2px;
+        border-radius: 1px;
+        background: var(--line2);
+      }
+      .tl-label {
+        position: absolute;
+        bottom: 1px;
+        font-family: var(--mono);
+        font-size: 9.5px;
+        color: var(--muted);
+        line-height: 1;
+        white-space: nowrap;
+      }
+      .tl-label.lt-start { left: 14px; }
+      .tl-label.lt-end { right: 14px; }
+      .tl-tip {
+        position: absolute;
+        top: 2px;
+        transform: translateX(-50%);
+        font-family: var(--mono);
+        font-size: 9.5px;
+        color: var(--text);
+        background: rgba(5, 9, 18, 0.85);
+        border: 1px solid var(--line2);
+        border-radius: 6px;
+        padding: 1px 6px;
+        pointer-events: none;
+        white-space: nowrap;
+        z-index: 2;
+      }
+      .logline.tl-mark {
+        outline: 1px solid var(--accent);
+        outline-offset: -1px;
+        background: rgba(56, 189, 248, 0.12);
       }
       .log-body.no-wrap {
         overflow-x: auto;
@@ -1172,10 +1247,21 @@
         display: none;
       }
       .logline {
+        position: absolute;
+        left: 0;
+        right: 0;
+        box-sizing: border-box;
         display: flex;
         gap: 10px;
         padding: 1px 14px;
+        margin: 0;
         border-bottom: 1px solid rgba(34, 48, 79, 0.18);
+        user-select: text;
+        -webkit-user-select: text;
+      }
+      .log-body .vspacer {
+        position: relative;
+        width: 100%;
       }
       .logline:hover {
         background: rgba(56, 189, 248, 0.05);
@@ -1673,6 +1759,10 @@
                 <option value="3000">3000</option>
                 <option value="5000">5000</option>
                 <option value="10000">10000</option>
+                <option value="20000">20000</option>
+                <option value="30000">30000</option>
+                <option value="50000">50000</option>
+                <option value="100000">100000</option>
               </select>
               <span class="conn wait" id="connState">-</span>
               <span class="count" id="lineCount">0</span>
@@ -1682,6 +1772,13 @@
             &#10005;
           </button>
         </header>
+        <div class="tl" id="logTimeline">
+          <div class="tl-bins" id="tlBins"></div>
+          <div class="tl-axisbar"></div>
+          <span class="tl-label lt-start" id="tlStart"></span>
+          <span class="tl-label lt-end" id="tlEnd"></span>
+          <span class="tl-tip hidden" id="tlTip"></span>
+        </div>
         <div id="logBody" class="log-body"></div>
         <footer class="modal-foot">
           <span id="selInfo"></span>
@@ -1832,6 +1929,7 @@
       var autoBtn = $("#autoBtn"), autoInt = $("#autoInt");
 
       var rows = [];
+      var dataset = { tok: 0 };
       var ES = null;
       var paused = false;
       var totalLines = 0;
@@ -2066,7 +2164,7 @@
         var c = fCtx.value, n = fNs.value, nd = fNode.value, p = fPhase.value, w = fKind.value, s = fState.value;
         var vis = 0;
         rows.forEach(function (tr) {
-          var ok = (!q || rowTokens(tr).indexOf(q) !== -1);
+          var ok = (!q || tr._tok.indexOf(q) !== -1);
           if (ok && c && tr.dataset.ctx !== c) ok = false;
           if (ok && n && tr.dataset.ns !== n) ok = false;
           if (ok && nd && tr.dataset.node !== nd) ok = false;
@@ -2096,15 +2194,16 @@
       }
 
       function updateSel() {
-        var n = tbody.querySelectorAll(".row-check:checked").length;
+        var boxes = tbody.querySelectorAll(".row-check");
+        var n = 0, i, tr;
+        for (i = 0; i < boxes.length; i++) {
+          tr = boxes[i].closest ? boxes[i].closest("tr") : null;
+          if (tr) tr.classList.toggle("row-on", boxes[i].checked);
+          if (boxes[i].checked) n++;
+        }
         selFoot.textContent = n;
         selFootLabel.textContent = n === 1 ? "container selected" : "containers selected";
         btnOpen.disabled = n === 0;
-        var boxes = tbody.querySelectorAll(".row-check");
-        for (var i = 0; i < boxes.length; i++) {
-          var tr = boxes[i].closest ? boxes[i].closest("tr") : null;
-          if (tr) tr.classList.toggle("row-on", boxes[i].checked);
-        }
       }
 
       function checkAllVisible() {
@@ -2373,19 +2472,20 @@
         return "unk";
       }
 
-      function renderTable(pods) {
-        tbody.innerHTML = "";
-        if (!pods || pods.length === 0) {
-          var tr0 = document.createElement("tr");
-          var td0 = document.createElement("td");
-          td0.colSpan = 12; td0.className = "empty";
-          td0.textContent = "No pods found. Check your kubeconfig and cluster availability.";
-          tr0.appendChild(td0);
-          tbody.appendChild(tr0);
-          cacheRows();
-          updateSel();
-          return;
-        }
+      function buildRow(p, ix) {
+        var tr = document.createElement("tr");
+        tr.dataset.ix = ix;
+        tr.dataset.ctx = p.context; tr.dataset.ns = p.namespace; tr.dataset.pod = p.name;
+        tr.dataset.cont = p.container; tr.dataset.node = p.node; tr.dataset.phase = p.phase;
+        tr.dataset.state = p.state; tr.dataset.ready = p.ready; tr.dataset.rests = p.restarts;
+        tr.dataset.image = p.image; tr.dataset.cpu = p.cpu || ""; tr.dataset.mem = p.mem || "";
+        tr.dataset.ts = p.created || "";
+        tr.dataset.owner = p.owner || ""; tr.dataset.ownerkind = p.ownerkind || "";
+        tr.dataset.workload = p.workload || "";
+        tr.dataset.labels = p.labels || "";
+        tr.dataset.cpuuse = p.cpuuse || ""; tr.dataset.memuse = p.memuse || "";
+        tr._tok = norm([p.name, p.container].join(" "));
+
         var mk = function (tag, cls, txt) {
           var el = document.createElement(tag);
           if (cls) el.className = cls;
@@ -2393,61 +2493,125 @@
           return el;
         };
         var td = function (cls, txt) { return mk("td", cls, txt); };
-        var badge = function (cls, txt) {
+        var badgeEl = function (cls, txt) {
           var s = document.createElement("span");
           s.className = "badge " + cls; s.textContent = txt;
           return s;
         };
 
-        pods.forEach(function (p) {
-          var tr = document.createElement("tr");
-          tr.dataset.ix = [p.context, p.namespace, p.name, p.container].join("|");
-          tr.dataset.ctx = p.context; tr.dataset.ns = p.namespace; tr.dataset.pod = p.name;
-          tr.dataset.cont = p.container; tr.dataset.node = p.node; tr.dataset.phase = p.phase;
-          tr.dataset.state = p.state; tr.dataset.ready = p.ready; tr.dataset.rests = p.restarts;
-          tr.dataset.image = p.image; tr.dataset.cpu = p.cpu || ""; tr.dataset.mem = p.mem || "";
-          tr.dataset.ts = p.created || "";
-          tr.dataset.owner = p.owner || ""; tr.dataset.ownerkind = p.ownerkind || "";
-          tr.dataset.workload = p.workload || "";
-          tr.dataset.labels = p.labels || "";
-          tr.dataset.cpuuse = p.cpuuse || ""; tr.dataset.memuse = p.memuse || "";
+        var c = {};
+        var t1 = td("chk", null);
+        var cb = document.createElement("input");
+        cb.type = "checkbox"; cb.className = "row-check"; cb.value = ix;
+        t1.appendChild(cb);
+        c.cb = cb;
+        tr.appendChild(t1);
 
-          var t1 = td("chk", null);
-          var cb = document.createElement("input");
-          cb.type = "checkbox"; cb.className = "row-check"; cb.value = tr.dataset.ix;
-          t1.appendChild(cb);
+        c.ctx = td("ctx", p.context); tr.appendChild(c.ctx);
+        c.ns = td("ns", p.namespace); tr.appendChild(c.ns);
+        c.pod = td("pod", p.name); tr.appendChild(c.pod);
+        c.cont = td("cont", p.container); tr.appendChild(c.cont);
 
-          tr.appendChild(t1);
-          tr.appendChild(td("ctx", p.context));
-          tr.appendChild(td("ns", p.namespace));
-          tr.appendChild(td("pod", p.name));
-          tr.appendChild(td("cont", p.container));
+        c.created = td("created", p.age || ""); tr.appendChild(c.created);
 
-          var t0 = td("created", p.age || "");
-          tr.appendChild(t0);
+        c.ph = { node: badgeEl(phaseCss(p.phase), p.phase), txt: p.phase };
+        var t2 = td(null, null); t2.appendChild(c.ph.node); tr.appendChild(t2);
+        c.st = { node: badgeEl(stateCss(p.state), p.state), txt: p.state };
+        var t3 = td(null, null); t3.appendChild(c.st.node); tr.appendChild(t3);
+        c.rd = { node: badgeEl(p.ready ? "yes" : "no", p.ready ? "Yes" : "No"), txt: p.ready ? "Yes" : "No" };
+        var t4 = td(null, null); t4.appendChild(c.rd.node); tr.appendChild(t4);
+        c.rs = { node: badgeEl(p.restarts > 0 ? "warn" : "muted", String(p.restarts || 0)), txt: String(p.restarts || 0) };
+        var t5 = td(null, null); t5.appendChild(c.rs.node); tr.appendChild(t5);
 
-          var t2 = td(null, null); t2.appendChild(badge(phaseCss(p.phase), p.phase)); tr.appendChild(t2);
-          var t3 = td(null, null); t3.appendChild(badge(stateCss(p.state), p.state)); tr.appendChild(t3);
-          var t4 = td(null, null); t4.appendChild(badge(p.ready ? "yes" : "no", p.ready ? "Yes" : "No")); tr.appendChild(t4);
-          var t5 = td(null, null);
-          t5.appendChild(badge(p.restarts > 0 ? "warn" : "muted", p.restarts || 0));
-          tr.appendChild(t5);
+        c.cpu = td("cpu hide-sm hide-md", p.cpu || ""); tr.appendChild(c.cpu);
+        c.mem = td("mem hide-sm hide-md", p.mem || ""); tr.appendChild(c.mem);
 
-          var t6 = td("cpu hide-sm hide-md", p.cpu || "");
-          tr.appendChild(t6);
-          var t7 = td("mem hide-sm hide-md", p.mem || "");
-          tr.appendChild(t7);
+        tr._c = c;
+        return tr;
+      }
 
-          tbody.appendChild(tr);
-        });
-        cacheRows();
+      function setCell(el, val) { if (el.textContent !== val) el.textContent = val; }
+      function setBadge(b, cls, txt) {
+        if (b.txt !== txt) { b.txt = txt; b.node.textContent = txt; }
+        var full = "badge " + cls;
+        if (b.node.className !== full) b.node.className = full;
+      }
+
+      // Обновляем существующую строку на месте: перезаписываем только изменившиеся
+      // dataset/ячейки. Чекбокс выживает — выделение не сбрасывается при refresh.
+      function updateCells(tr, p) {
+        tr.dataset.ctx = p.context; tr.dataset.ns = p.namespace; tr.dataset.pod = p.name;
+        tr.dataset.cont = p.container; tr.dataset.node = p.node; tr.dataset.phase = p.phase;
+        tr.dataset.state = p.state; tr.dataset.ready = p.ready; tr.dataset.rests = p.restarts;
+        tr.dataset.image = p.image; tr.dataset.cpu = p.cpu || ""; tr.dataset.mem = p.mem || "";
+        tr.dataset.ts = p.created || "";
+        tr.dataset.owner = p.owner || ""; tr.dataset.ownerkind = p.ownerkind || "";
+        tr.dataset.workload = p.workload || "";
+        tr.dataset.labels = p.labels || "";
+        tr.dataset.cpuuse = p.cpuuse || ""; tr.dataset.memuse = p.memuse || "";
+        tr._tok = norm([p.name, p.container].join(" "));
+        var c = tr._c;
+        setCell(c.ctx, p.context); setCell(c.ns, p.namespace); setCell(c.pod, p.name); setCell(c.cont, p.container);
+        setCell(c.created, p.age || "");
+        setBadge(c.ph, phaseCss(p.phase), p.phase);
+        setBadge(c.st, stateCss(p.state), p.state);
+        setBadge(c.rd, p.ready ? "yes" : "no", p.ready ? "Yes" : "No");
+        setBadge(c.rs, p.restarts > 0 ? "warn" : "muted", String(p.restarts || 0));
+        setCell(c.cpu, p.cpu || ""); setCell(c.mem, p.mem || "");
+      }
+
+      // In-place diff по ключу ctx|ns|pod|cont: строки, которых больше нет,
+      // удаляются, новые создаются, остальные обновляются без пересоздания DOM.
+      // Выделение (row-check) сохраняется автоматически — элемент переиспользуется.
+      function renderTable(pods) {
+        dataset.tok++;
+        var list = pods || [];
+        var emptyTr = tbody.querySelector("#emptyRow");
+        if (list.length === 0) {
+          if (emptyTr) { emptyTr.style.display = ""; }
+          else {
+            emptyTr = document.createElement("tr");
+            emptyTr.id = "emptyRow";
+            var td0 = document.createElement("td");
+            td0.colSpan = 12; td0.className = "empty";
+            td0.textContent = "No pods found. Check your kubeconfig and cluster availability.";
+            emptyTr.appendChild(td0);
+            tbody.appendChild(emptyTr);
+          }
+          if (rows.length) {
+            for (var r0 = 0; r0 < rows.length; r0++) {
+              if (rows[r0].parentNode) rows[r0].parentNode.removeChild(rows[r0]);
+            }
+            rows = [];
+          }
+          return;
+        }
+        if (emptyTr && emptyTr.parentNode) emptyTr.parentNode.removeChild(emptyTr);
+
+        var byIx = {};
+        for (var a = 0; a < rows.length; a++) {
+          var ex = rows[a];
+          if (ex.dataset && ex.dataset.ix) byIx[ex.dataset.ix] = ex;
+        }
+        var out = [], j, p, ix, tr, k;
+        for (j = 0; j < list.length; j++) {
+          p = list[j];
+          ix = [p.context, p.namespace, p.name, p.container].join("|");
+          tr = byIx[ix];
+          if (tr) { delete byIx[ix]; updateCells(tr, p); }
+          else { tr = buildRow(p, ix); }
+          out.push(tr);
+        }
+        for (k in byIx) {
+          var gone = byIx[k];
+          if (gone.parentNode) gone.parentNode.removeChild(gone);
+        }
+        out.forEach(function (tr) { tbody.appendChild(tr); });
+        rows = out;
         populateKindFilter();
-        updateSel();
       }
 
       function renderAll(d) {
-        var checked = {};
-        tbody.querySelectorAll(".row-check:checked").forEach(function (cb) { checked[cb.value] = 1; });
         window.__crossboardData = d;
         var cards = d.cards || [];
         renderCards($("#cards"), cards.slice(0, 10));
@@ -2455,11 +2619,9 @@
         decorateCards($("#cards"));
         decorateCards($("#cards2"));
         renderSelects(d.contexts || [], d.namespaces || [], d.nodes || [], d.phases || [], d.states || []);
+        // Строки обновляются in-place; выделение сохраняется. Ре-чекбокса нет.
         renderTable(d.pods || []);
         scopeNodeList();
-        tbody.querySelectorAll(".row-check").forEach(function (cb) {
-          if (checked[cb.value]) cb.checked = true;
-        });
         updateSel();
         var up = $("#updated");
         if (up) up.textContent = fmtTime(d.generated);
@@ -2498,14 +2660,19 @@
       function clearLog() {
         streamRetries = 0;
         lastKey = null;
-        logBody.innerHTML = "";
+        vpClearRows();
+        logs = []; csum = [0];
+        markIndex = -1;
+        if (markTimer) { clearTimeout(markTimer); markTimer = null; }
         totalLines = 0; shownLines = 0;
         maxCtxW = 9; maxPodW = 16;
         logBody.style.removeProperty("--ctxw");
         logBody.style.removeProperty("--podw");
+        tlReset();
         setConn("-", "wait");
         lineCountEl.textContent = "0";
         logFilter.value = "";
+        vpRefluid();
       }
 
       function updateSelInfo() {
@@ -2547,13 +2714,401 @@
       var settling = false;
       var settleTimer = null;
       var restartTimer = null;
-      var MAX_LOG_LINES = 11000;
+      // Данные лога живут в logs[] бессрочно (десятки тысяч строк): DOM
+      // виртуализован и держит только видимый слайс (~200-300 элементов) с
+      // учётом word-wrap. Отдельного капа на число строк нет — храним всю
+      // выборку/историю, таймлайн тоже не прореживаем.
+      var stickBottom = false;
+
+      /* ---------- виртуализация строк лога (окно + замер высот) ---------- */
+      var logs = [];
+      var csum = [0];
+      var vpEls = {};
+      var topSp = null, botSp = null;
+      var vpProbe = null, vpChars = null, vpLead = null, vpWrapped = true;
+      var vpTick = false;
+      var markIndex = -1, markTimer = null;
+
+      function vpSpacers() {
+        if (topSp || !logBody) return;
+        topSp = document.createElement("div");
+        topSp.className = "vspacer";
+        botSp = document.createElement("div");
+        botSp.className = "vspacer";
+        logBody.appendChild(topSp);
+        logBody.appendChild(botSp);
+      }
+      vpSpacers();
+
+      function vpDefaultH() { return vpLead || 21; }
+
+      function vpEstimate(it) {
+        if (!vpWrapped) return vpDefaultH();
+        if (vpChars == null || !it.msg) return vpDefaultH();
+        return Math.max(1, Math.ceil(it.msg.length / vpChars)) * vpDefaultH();
+      }
+      function vpSlotH(it) { return (it.h > 0) ? it.h : (it.est || vpDefaultH()); }
+
+      function rebuildCsum() {
+        var n = logs.length, acc = 0, i, ns = new Array(n + 1);
+        ns[0] = 0;
+        for (i = 0; i < n; i++) { acc += logs[i].shown ? vpSlotH(logs[i]) : 0; ns[i + 1] = acc; }
+        csum = ns;
+      }
+
+      // первый индекс строки, чей низ (csum[i+1]) > y — строка покрывает y
+      function vpFirstAbove(y) {
+        var lo = 0, hi = logs.length;
+        while (lo < hi) {
+          var mid = (lo + hi) >> 1;
+          if (csum[mid + 1] > y) hi = mid; else lo = mid + 1;
+        }
+        return lo;
+      }
+
+      function vpClearRows() {
+        var k;
+        for (k in vpEls) { try { vpEls[k].el.remove(); } catch (_) {} }
+        vpEls = {};
+      }
+
+      function vpRow(i) {
+        var it = logs[i];
+        var el = document.createElement("div");
+        el.setAttribute("data-vix", String(i));
+        var cls = "logline";
+        if (it.isErr) cls += " logerr";
+        if (it.ctxN) cls += " ctx";
+        el.className = cls;
+        var b = document.createElement("span"); b.className = "lb-badge"; b.textContent = it.ctx;
+        var t = document.createElement("span"); t.className = "lb-time"; t.textContent = it.ts;
+        var w = document.createElement("span"); w.className = "lb-where"; w.textContent = it.pod;
+        var m = document.createElement("span"); m.className = "lb-msg";
+        renderMsg(m, it.msg);
+        el.appendChild(b); el.appendChild(w); el.appendChild(t); el.appendChild(m);
+        return el;
+      }
+
+      // Окно: рендерим только показанные строки [lo,hi). Высота строки — реальный
+      // offsetHeight (учитывает wrap), неотрендеренные — оценка vpEstimate. Общая
+      // высота задаётся двумя спейсерами (скроллбар настоящий).
+      function vpRender() {
+        vpTick = false;
+        if (!logBody) return;
+        if (logs.length === 0) {
+          vpClearRows();
+          if (topSp) { topSp.style.height = "0px"; botSp.style.height = "0px"; }
+          return;
+        }
+        vpSpacers();
+        var st = logBody.scrollTop || 0;
+        var vh = logBody.clientHeight || 300;
+        var over = 120;
+        var lo = vpFirstAbove(st - over);
+        var hi = vpFirstAbove(st + vh + over);
+        var n = logs.length, i, k;
+        for (k in vpEls) {
+          var ki = +k;
+          if (ki < lo || ki >= hi || !logs[ki] || !logs[ki].shown) {
+            try { vpEls[ki].el.remove(); } catch (_) {}
+            delete vpEls[k];
+          }
+        }
+        var remeasured = false;
+        for (i = lo; i < hi && i < n; i++) {
+          if (!logs[i].shown) continue;
+          var rec = vpEls[i];
+          if (!rec) {
+            var el = vpRow(i);
+            logBody.insertBefore(el, botSp);
+            rec = { el: el, top: -1 };
+            vpEls[i] = rec;
+          }
+          if (rec.top !== csum[i]) { rec.top = csum[i]; rec.el.style.top = csum[i] + "px"; }
+          var oh = rec.el.offsetHeight;
+          if (logs[i].h !== oh) { logs[i].h = oh; remeasured = true; }
+          rec.el.classList.toggle("tl-mark", i === markIndex);
+        }
+        topSp.style.height = csum[lo] + "px";
+        botSp.style.height = (csum[n] - csum[lo]) + "px";
+        if (remeasured) {
+          rebuildCsum();
+          for (i = lo; i < hi && i < n; i++) {
+            if (!logs[i].shown) continue;
+            if (vpEls[i]) { vpEls[i].top = csum[i]; vpEls[i].el.style.top = csum[i] + "px"; }
+          }
+          topSp.style.height = csum[lo] + "px";
+          botSp.style.height = (csum[n] - csum[lo]) + "px";
+        }
+      }
+
+      function vpNeed() {
+        if (vpTick || !logBody) return;
+        vpTick = true;
+        raf(vpRender);
+      }
+
+      // Пересчёт метрик (ширина msg-зоны, высота строки) после смены ширины
+      // колонок/wrap/ts: измеренные высоты инвалидируются, оценки обновляются.
+      function vpRefluid() {
+        if (!logBody) return;
+        vpSpacers();
+        vpWrapped = wrapChk.checked;
+        if (!vpProbe) {
+          vpProbe = document.createElement("div");
+          vpProbe.className = "logline";
+          vpProbe.style.position = "absolute";
+          vpProbe.style.top = "-1000px";
+          vpProbe.style.left = "0";
+          vpProbe.style.right = "0";
+          vpProbe.style.visibility = "hidden";
+          vpProbe.style.pointerEvents = "none";
+          var pb = document.createElement("span"); pb.className = "lb-badge"; pb.textContent = "ctx";
+          var pt = document.createElement("span"); pt.className = "lb-time"; pt.textContent = "ts";
+          var pw = document.createElement("span"); pw.className = "lb-where"; pw.textContent = "pod";
+          var pmsg = document.createElement("span"); pmsg.className = "lb-msg";
+          var pchar = document.createElement("i"); pchar.className = "vp-char"; pchar.textContent = "00000000000000000000000";
+          pmsg.appendChild(pchar);
+          vpProbe.appendChild(pb); vpProbe.appendChild(pt); vpProbe.appendChild(pw); vpProbe.appendChild(pmsg);
+          logBody.appendChild(vpProbe);
+        }
+        var mspan = vpProbe.querySelector(".lb-msg");
+        var cchr = vpProbe.querySelector(".vp-char");
+        var mw = mspan && mspan.clientWidth ? mspan.clientWidth : 0;
+        var cwpx = cchr && cchr.clientWidth && cchr.textContent ? cchr.clientWidth / cchr.textContent.length : 0;
+        vpChars = (mw > 0 && cwpx > 0) ? Math.max(8, Math.floor(mw / cwpx)) : 100;
+        var oh = vpProbe.offsetHeight;
+        var lh = mspan ? parseFloat(window.getComputedStyle(mspan).lineHeight || "0") : 0;
+        vpLead = (oh > 0) ? oh : (lh > 0 ? Math.ceil(lh) + 3 : 21);
+        var i;
+        for (i = 0; i < logs.length; i++) { logs[i].est = vpEstimate(logs[i]); logs[i].h = 0; }
+        rebuildCsum();
+        vpClearRows();
+        vpNeed();
+      }
+
+      function copyText(t) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t).catch(function () {});
+          return;
+        }
+        var ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        try { document.execCommand("copy"); } catch (_) {}
+        document.body.removeChild(ta);
+      }
+
+      // Клик по строке — копирование всей строки (делегирование, один
+      // обработчик). При активном drag-выделении (не коллапсированная селекция)
+      // клик игнорируется — не затираем буфер и не ломаем выделение текста.
+      logBody.addEventListener("click", function (e) {
+        var sel = window.getSelection && window.getSelection();
+        if (sel && !sel.isCollapsed) return;
+        var el = e.target;
+        while (el && el !== logBody && !(el.classList && el.classList.contains("logline"))) el = el.parentNode;
+        if (!el || el === logBody) return;
+        var vix = parseInt(el.getAttribute ? el.getAttribute("data-vix") : "", 10);
+        var it = (vix >= 0 && logs[vix]) ? logs[vix] : null;
+        if (it) copyText(it.msg);
+      });
+
+      /* ---------- таймлайн лог-потока по timestamp ---------- */
+      // Гистограмма объёма логов (стиль Grafana): диапазон [мин, макс] делится
+      // на NBINS корзин, высота колонки пропорциональна числу строк в корзине.
+      // Данные копятся инкрементально (tlTimes/tlErrs), рендер троттлится через
+      // requestAnimationFrame — при бурном стриме пересчёт идёт не чаще кадра.
+      var tlBar = $("#logTimeline"), tlBins = $("#tlBins"),
+          tlStart = $("#tlStart"), tlEnd = $("#tlEnd"), tlTip = $("#tlTip");
+      var tlTimes = [], tlErrs = [];
+      var tlMin = null, tlMax = null, tlLines = 0;
+      var tlCounts = null, tlErrPrev = null, tlBinEls = null;
+      var tlDirty = false;
+      var tlLastRender = 0;
+      var NBINS = 160;
+      var TL_INTERVAL = 350;
+
+      function raf(fn) {
+        if (window.requestAnimationFrame) window.requestAnimationFrame(fn);
+        else if (typeof globalThis !== "undefined" && globalThis.requestAnimationFrame) globalThis.requestAnimationFrame(fn);
+        else if (typeof requestAnimationFrame !== "undefined") requestAnimationFrame(fn);
+        else setTimeout(fn, 32);
+      }
+      function tlFrame(fn) { raf(fn); }
+
+      function tlReset() {
+        tlTimes = []; tlErrs = []; tlMin = null; tlMax = null; tlLines = 0;
+        tlCounts = null; tlErrPrev = null;
+        if (tlBins) tlBins.innerHTML = "";
+        tlBinEls = null;
+        if (tlBar) { tlBar.style.setProperty("--tl0", 0); tlBar.style.setProperty("--tl1", 1); }
+        if (tlStart) tlStart.textContent = "";
+        if (tlEnd) tlEnd.textContent = "";
+        if (tlTip) { tlTip.classList.add("hidden"); tlTip.textContent = ""; }
+        tlSchedule();
+      }
+
+      function tlFmt(ms, span) {
+        var d = new Date(ms);
+        var p = function (x) { return String(x).padStart(2, "0"); };
+        var hm = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+        if (span > 86400000) return (d.getMonth() + 1) + "-" + p(d.getDate()) + " " + hm;
+        return hm;
+      }
+
+      function tlAdd(ms, isErr) {
+        if (isNaN(ms)) return;
+        if (tlLines === 0) { tlMin = ms; tlMax = ms; }
+        else {
+          if (ms < tlMin) tlMin = ms;
+          if (ms > tlMax) tlMax = ms;
+        }
+        tlLines++;
+        tlTimes.push(ms); tlErrs.push(isErr ? 1 : 0);
+        tlBar.style.setProperty("--tl0", tlMin);
+        tlBar.style.setProperty("--tl1", tlMax + 1);
+        tlStart.textContent = tlFmt(tlMin, tlMax - tlMin);
+        tlEnd.textContent = tlFmt(tlMax, tlMax - tlMin);
+        tlSchedule();
+      }
+
+      // Рендер троттлится интервалом (TL_INTERVAL), а не каждым кадром: на
+      // бурсте из тысяч строк колонки переписываются максимум ~3 раза/с вместо
+      // 60, и приоритет отдаётся самому логу.
+      function tlSchedule() {
+        if (tlDirty) return;
+        tlDirty = true;
+        var wait = Math.max(0, TL_INTERVAL - (Date.now() - tlLastRender));
+        setTimeout(function () { if (tlDirty) tlRender(); }, wait);
+      }
+
+      function tlRender() {
+        tlDirty = false;
+        tlLastRender = Date.now();
+        if (!tlBins || tlLines === 0) return;
+        var span = tlMax - tlMin + 1;
+        if (span <= 0) return;
+        var counts = new Array(NBINS), errs = new Array(NBINS);
+        var i;
+        for (i = 0; i < NBINS; i++) { counts[i] = 0; errs[i] = 0; }
+        for (i = 0; i < tlTimes.length; i++) {
+          var idx = Math.floor((tlTimes[i] - tlMin) / span * NBINS);
+          if (idx < 0) idx = 0; else if (idx >= NBINS) idx = NBINS - 1;
+          counts[idx]++;
+          if (tlErrs[i]) errs[idx] = 1;
+        }
+        // Распределение по корзинам не изменилось — DOM не трогаем вовсе,
+        // чтобы не гонять пересчёт раскладки и перерисовку на пустом месте.
+        if (tlCounts) {
+          var same = true;
+          for (i = 0; i < NBINS; i++) {
+            if (tlCounts[i] !== counts[i] || tlErrPrev[i] !== errs[i]) { same = false; break; }
+          }
+          if (same) return;
+        }
+        var maxc = 1;
+        for (i = 0; i < NBINS; i++) if (counts[i] > maxc) maxc = counts[i];
+        if (!tlBinEls) {
+          tlBinEls = [];
+          for (i = 0; i < NBINS; i++) {
+            var col = document.createElement("i");
+            col.className = "bin";
+            tlBins.appendChild(col);
+            tlBinEls.push(col);
+          }
+        }
+        for (i = 0; i < NBINS; i++) {
+          var c = tlBinEls[i];
+          c.classList.toggle("err", !!errs[i]);
+          c.style.opacity = counts[i] ? "1" : "0";
+          c.style.height = Math.round(counts[i] / maxc * 94) + "%";
+        }
+        tlCounts = counts;
+        tlErrPrev = errs;
+      }
+
+      function tlPos(ev) {
+        var rect = tlBar.getBoundingClientRect();
+        if (!rect.width || tlMin === null) return null;
+        var x = ev.clientX - rect.left;
+        var frac = Math.max(0, Math.min(1, x / rect.width));
+        return { frac: frac, t: tlMin + frac * (tlMax - tlMin), x: x };
+      }
+
+      function tlJump(slot) {
+        if (slot < 0 || slot >= logs.length) return;
+        logBody.scrollTop = Math.max(0, csum[slot] - logBody.clientHeight / 3);
+        markIndex = slot;
+        if (markTimer) clearTimeout(markTimer);
+        markTimer = setTimeout(function () { markIndex = -1; }, 1600);
+        vpNeed();
+      }
+
+      tlBar.addEventListener("mousemove", function (ev) {
+        var p = tlPos(ev);
+        if (!p || !tlCounts) return;
+        tlTip.classList.remove("hidden");
+        var bidx = Math.floor(p.frac * NBINS);
+        if (bidx < 0) bidx = 0; else if (bidx >= NBINS) bidx = NBINS - 1;
+        var c = tlCounts[bidx] || 0;
+        var span = tlMax - tlMin + 1;
+        var t0b = tlMin + bidx / NBINS * span;
+        var t1b = tlMin + (bidx + 1) / NBINS * span;
+        tlTip.textContent = c + " logs \u00B7 " + tlFmt(t0b, span) + " \u2192 " + tlFmt(t1b, span);
+        tlTip.style.left = p.x + "px";
+      });
+      tlBar.addEventListener("mouseleave", function () {
+        tlTip.classList.add("hidden");
+      });
+      tlBar.addEventListener("click", function (ev) {
+        var p = tlPos(ev);
+        if (!p) return;
+        // Ближайшая (по timestamp) показанная строка >= момента клика.
+        for (var i = 0; i < logs.length; i++) {
+          var it = logs[i];
+          if (it.shown && it.tsMs >= 0 && it.tsMs >= p.t) { tlJump(i); return; }
+        }
+      });
       function followOn() { return followChk.classList.contains("on"); }
       function autoScrollOn() { return autoScroll.classList.contains("on"); }
       function settleStart() {
         settling = true;
         if (settleTimer) clearTimeout(settleTimer);
-        settleTimer = setTimeout(function () { settling = false; }, 1200);
+        settleTimer = setTimeout(function () {
+          settling = false;
+          // После загрузки истории/паузы догружаем и прилипаем вниз один раз.
+          followScrollBatch();
+        }, 1200);
+      }
+
+      // Принудительная прокрутка вниз батчится через rAF: одно обновление за
+      // кадр вместо синхронного layout'а на каждую строку. Вложенный raf
+      // гарантирует, что спейсеры виртуализации успели пересчитаться рендером
+      // окна (иначе scrollTop устанавливался бы по «прошлой» полной высоте).
+      // stickBottom — «замок» на нижнюю точку: держим вниз, пока пользователь
+      // сам не открутит вверх (тогда scroll-слушатель снимает флаг).
+      var scrollTick = false;
+      function followScrollBatch() {
+        if (paused || settling || !autoScrollOn()) return;
+        if (modal.classList.contains("hidden") || scrollTick) return;
+        scrollTick = true;
+        raf(function () {
+          scrollTick = false;
+          if (paused || settling || !autoScrollOn()) return;
+          if (modal.classList.contains("hidden")) return;
+          raf(function () {
+            if (paused || settling || !autoScrollOn()) return;
+            if (modal.classList.contains("hidden")) return;
+            // Пользователь ушёл вверх по истории — не вырываем прокрутку.
+            if (!stickBottom &&
+                logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight > 80) return;
+            stickBottom = true;
+            logBody.scrollTop = logBody.scrollHeight;
+          });
+        });
       }
 
       function startStream() {
@@ -2567,6 +3122,7 @@
         if (ids.length === 0) { setConn("Nothing selected", "off"); return; }
         setConn("Connecting...", "wait");
         logBody.scrollTop = 0;
+        stickBottom = true;
         settleStart();
         var params = ["since=" + encodeURIComponent(sinceSel.value)];
         params.push("lines=" + (linesSel.value === "0" ? "1" : linesSel.value));
@@ -2812,92 +3368,53 @@
                   "|" + (d.timestamp || "") + "|" + (d.message || d.error || "");
         if (key === lastKey) return;
         lastKey = key;
-
-        // Ограничение DOM: live-лог не должен расти бесконечно при долгом
-        // follow-стриме. Удаляем самые старые строки сверху. totalLines при
-        // этом сохраняется (счётчик «получено за сессию») — показанное число
-        // растёт вместе с реальным потоком, а DOM держит последние MAX_LOG_LINES.
-        if (logBody.childElementCount >= MAX_LOG_LINES) {
-          var overflow = logBody.childElementCount - MAX_LOG_LINES + 1;
-          for (var i = 0; i < overflow; i++) {
-            var first = logBody.firstElementChild;
-            if (!first) break;
-            // shownLines — число видимых строк (совпадения + раскрытый
-            // контекст), поэтому декрементим любую не скрытую строку, а не
-            // только match.
-            if (first.classList.contains("logline") && !first.classList.contains("hide")) shownLines--;
-            logBody.removeChild(first);
-          }
-        }
-
-        var el = document.createElement("div");
-        el.className = "logline" + (isErr ? " logerr" : "");
-        el.dataset.raw = d.message || d.error || "";
-
-        var b = document.createElement("span");
-        b.className = "lb-badge"; b.textContent = d.context;
-        var t = document.createElement("span");
-        t.className = "lb-time"; t.textContent = d.timestamp || "";
-        var w = document.createElement("span");
-        w.className = "lb-where";
-        w.textContent = d.pod + (d.container ? "/" + d.container : "");
-        var m = document.createElement("span");
-        m.className = "lb-msg";
-
-        trackWidth("ctx", d.context);
-        trackWidth("ts", d.timestamp || "");
-        trackWidth("pod", w.textContent);
-
-        el.appendChild(b); el.appendChild(w); el.appendChild(t); el.appendChild(m);
-        logBody.appendChild(el);
-        totalLines++;
+        var msg = d.message || d.error || "";
+        var tsMs = new Date(d.timestamp || "").getTime();
+        if (!isNaN(tsMs)) tlAdd(tsMs, isErr);
 
         var q = logFilter.value;
         var mode = logMode();
         var ins = insens.checked;
         var ctx = ctxChk.checked;
-        var ok = lineMatches(el.dataset.raw, q, mode, ins);
-        el.dataset.match = ok ? "1" : "0";
-
-        var shown = ok;
-        if (!shown && ctx) {
-          // Контекстный вывод (grep -B 1): предыдущая строка — совпадение.
-          // Следующая разкроет себя сама, когда придёт.
-          var prev = el.previousElementSibling;
-          if (prev && prev.classList.contains("logline") && prev.dataset.match === "1") {
-            shown = true;
-            el.classList.add("ctx");
-          }
+        var ok = lineMatches(msg, q, mode, ins);
+        var it = {
+          ctx: d.context,
+          pod: d.pod + (d.container ? "/" + d.container : ""),
+          ts: d.timestamp || "",
+          tsMs: isNaN(tsMs) ? -1 : tsMs,
+          msg: msg,
+          isErr: !!isErr,
+          match: ok ? 1 : 0,
+          shown: ok,
+          ctxN: false,
+          h: 0,
+          est: 0
+        };
+        // grep -B 1: предыдущая строка — совпадение, новая становится контекстом.
+        var pl = logs[logs.length - 1];
+        if (!ok && ctx && pl && pl.match) { it.shown = true; it.ctxN = true; }
+        // grep -A 1: эта строка — совпадение, скрытый предшественник раскрывается.
+        var flipped = false;
+        if (ctx && ok && pl && !pl.match && !pl.shown) { pl.shown = true; pl.ctxN = true; shownLines++; flipped = true; }
+        if (it.shown) shownLines++;
+        it.est = vpEstimate(it);
+        logs.push(it);
+        totalLines++;
+        // Инкрементальный хвост csum: новая строка имеет индекс m0-1 в logs[].
+        var m0 = logs.length;
+        if (flipped) {
+          var hp = vpSlotH(pl);
+          csum[m0 - 1] = (m0 >= 2 ? csum[m0 - 2] : 0) + hp;
         }
-        if (shown) {
-          shownLines++;
-          renderMsg(m, el.dataset.raw);
-        } else {
-          el.classList.add("hide");
-        }
+        csum[m0] = csum[m0 - 1] + (it.shown ? vpSlotH(it) : 0);
 
-        // Текущая строка — совпадение: скрытая несовпавшая предыдущая становится
-        // контекстной (grep -A 1) и разворачивается. Контекст не размножается дальше,
-        // т.к. раскрытие затрагивает только соседей настоящего совпадения.
-        if (ctx && ok) {
-          var p = el.previousElementSibling;
-          if (p && p.classList.contains("logline") && p.dataset.match === "0" &&
-              p.classList.contains("hide")) {
-            p.classList.remove("hide");
-            p.classList.add("ctx");
-            renderMsg(p.querySelector(".lb-msg"), p.dataset.raw);
-            shownLines++;
-          }
-        }
-
-        el.addEventListener("click", function () {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(d.message || d.error || "");
-          }
-        });
+        trackWidth("ctx", it.ctx);
+        trackWidth("ts", it.ts);
+        trackWidth("pod", it.pod);
 
         lineCountEl.textContent = shownLines + " / " + totalLines;
-        if (autoScrollOn() && !settling) logBody.scrollTop = logBody.scrollHeight;
+        followScrollBatch();
+        vpNeed();
       }
 
       function applyLogFilter() {
@@ -2905,28 +3422,25 @@
         var mode = logMode();
         var ins = insens.checked;
         var ctx = ctxChk.checked;
-        var els = logBody.querySelectorAll(".logline");
-        var i, n = els.length;
+        var i, n = logs.length;
         var match = new Array(n);
         for (i = 0; i < n; i++) {
-          match[i] = lineMatches(els[i].dataset.raw, q, mode, ins);
-          els[i].dataset.match = match[i] ? "1" : "0";
-          els[i].classList.remove("ctx");
+          match[i] = lineMatches(logs[i].msg, q, mode, ins) ? 1 : 0;
         }
         shownLines = 0;
         for (i = 0; i < n; i++) {
-          var ok = match[i] || (ctx && ((i > 0 && match[i - 1]) || (i < n - 1 && match[i + 1])));
-          els[i].classList.toggle("hide", !ok);
-          if (ok) {
-            shownLines++;
-            els[i].classList.toggle("ctx", !match[i]);
-            renderMsg(els[i].querySelector(".lb-msg"), els[i].dataset.raw);
-          } else {
-            els[i].querySelector(".lb-msg").textContent = "";
-          }
+          var ok = !!match[i] ||
+                   (ctx && ((i > 0 && match[i - 1]) || (i < n - 1 && match[i + 1])));
+          logs[i].match = match[i] ? 1 : 0;
+          logs[i].shown = ok;
+          logs[i].ctxN = ok && !match[i];
+          if (ok) shownLines++;
         }
         lineCountEl.textContent = shownLines + " / " + totalLines;
         logFilter.classList.toggle("re", mode === "regex" && q !== "" && !isValidRegex(q));
+        rebuildCsum();
+        vpClearRows();
+        vpNeed();
       }
       logFilter.addEventListener("input", applyLogFilter);
       insens.addEventListener("change", applyLogFilter);
@@ -2937,11 +3451,22 @@
 
       autoScroll.addEventListener("click", function () {
         autoScroll.classList.toggle("on");
-        if (autoScrollOn()) logBody.scrollTop = logBody.scrollHeight;
+        if (autoScrollOn()) {
+          stickBottom = true;
+          logBody.scrollTop = logBody.scrollHeight;
+        } else {
+          stickBottom = false;
+        }
+        vpNeed();
       });
       logBody.addEventListener("scroll", function () {
         var near = logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 60;
-        if (!near && autoScrollOn()) autoScroll.classList.remove("on");
+        if (!near) {
+          // Пользователь вручную ушёл вверх — автоскролл и «замок» выключаются.
+          stickBottom = false;
+          if (autoScrollOn()) autoScroll.classList.remove("on");
+        }
+        vpNeed();
       });
 
       function restartIfStreaming() {
@@ -2977,29 +3502,24 @@
 
       wrapChk.addEventListener("change", function () {
         logBody.classList.toggle("no-wrap", !wrapChk.checked);
+        vpRefluid();
       });
       tsChk.addEventListener("change", function () {
         logBody.classList.toggle("no-ts", !tsChk.checked);
+        vpRefluid();
       });
 
       $("#btnClearLogs").addEventListener("click", function () {
-        logBody.innerHTML = "";
-        totalLines = 0; shownLines = 0;
-        lastKey = null;
-        lineCountEl.textContent = "0";
+        clearLog();
         if (!paused) startStream();
       });
 
       $("#btnDownload").addEventListener("click", function () {
         var lines = [];
-        logBody.querySelectorAll(".logline:not(.hide)").forEach(function (el) {
-          var parts = [];
-          ["lb-badge", "lb-where", "lb-time", "lb-msg"].forEach(function (c) {
-            var q = el.querySelector("." + c);
-            if (q && q.textContent) parts.push(q.textContent);
-          });
-          lines.push(parts.join(" "));
-        });
+        for (var i = 0; i < logs.length; i++) {
+          var it = logs[i];
+          if (it.shown) lines.push(it.ctx + " " + it.pod + " " + it.ts + " " + it.msg);
+        }
         if (lines.length === 0) return;
         var blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
         var a = document.createElement("a");
