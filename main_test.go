@@ -769,7 +769,7 @@ func TestRunLogStreamMultiplexesSources(t *testing.T) {
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "nsA", Pod: "podA", Container: "ctA"},
 		{Context: "c2", Namespace: "nsB", Pod: "podB", Container: "ctB"},
-	}, "1h", true, 200, src)
+	}, "1h", "", true, 200, src)
 
 	var errs, lines []LogStreamEvent
 	for ev := range events {
@@ -820,7 +820,7 @@ func TestRunLogStreamSourceError(t *testing.T) {
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
 		{Context: "c2", Namespace: "ns", Pod: "podMISSING", Container: "ctB"},
-	}, "", false, 0, src)
+	}, "", "", false, 0, src)
 
 	var errs int
 	var lines int
@@ -875,7 +875,7 @@ func TestRunLogStreamKillsOnCancel(t *testing.T) {
 
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
-	}, "1h", true, 200, src)
+	}, "1h", "", true, 200, src)
 
 	for ev := range events {
 		if ev.Err == nil && ev.Line.Message != "" {
@@ -941,7 +941,7 @@ func TestRunLogStreamLongLine(t *testing.T) {
 
 	events := runLogStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
-	}, "", false, 0, src)
+	}, "", "", false, 0, src)
 
 	var msgs []string
 	for ev := range events {
@@ -996,7 +996,7 @@ func TestRestartFollowStreamReopensOnEOF(t *testing.T) {
 
 	events := restartFollowStream(ctx, []Selection{
 		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
-	}, "", true, 200, src)
+	}, "", "", true, 200, src)
 
 	var msgs []string
 	for ev := range events {
@@ -1354,6 +1354,86 @@ func TestLogsHandlerStreamsSSE(t *testing.T) {
 	}
 	if gotSel.Container != "web" {
 		t.Errorf("selection container = %q", gotSel.Container)
+	}
+}
+
+// Клиентский resume (Pause/Resume) передаёт since-time: /logs должен дойти
+// до источника как sinceTime с lines=0 (не повторять уже загруженную историю).
+func TestLogsHandlerResumeSinceTime(t *testing.T) {
+	old := openLogStreamFn
+	saw := false
+	openLogStreamFn = func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error) {
+		if sinceTime != "2024-01-02T03:04:05.000000000Z" {
+			t.Errorf("sinceTime = %q, want последняя метка клиента", sinceTime)
+		}
+		if lines != 0 {
+			t.Errorf("lines = %d, want 0 (приоритет --since-time)", lines)
+		}
+		saw = true
+		return io.NopCloser(strings.NewReader("new-line\n")), nil
+	}
+	defer func() { openLogStreamFn = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(handleLogs))
+	defer srv.Close()
+
+	sel := "k8s-prod|prod|web-0|web"
+	resp, err := http.Get(srv.URL + "/logs?sel=" + url.QueryEscape(sel) +
+		"&since-time=" + url.QueryEscape("2024-01-02T03:04:05.000000000Z") + "&follow=0")
+	if err != nil {
+		t.Fatalf("GET /logs: %v", err)
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(bodyBytes), "new-line") {
+		t.Errorf("SSE-поток не содержит новые строки: %q", bodyBytes)
+	}
+	if !saw {
+		t.Error("source не был вызван")
+	}
+}
+
+func TestRestartFollowStreamResumeSeed(t *testing.T) {
+	ts := "2024-01-02T03:04:05.000000000Z"
+	var calls []struct {
+		sinceTime string
+		lines     int
+	}
+	src := sourceFunc(func(sel Selection, _ string, sinceTime string, _ bool, lines int) (io.ReadCloser, error) {
+		calls = append(calls, struct {
+			sinceTime string
+			lines     int
+		}{sinceTime, lines})
+		return io.NopCloser(strings.NewReader("resumed\n")), nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// follow=true: клиентский since-time — стартовая точка; дальше стандартный
+	// reconnect по последней прочитанной метке.
+	events := restartFollowStream(ctx, []Selection{
+		{Context: "c1", Namespace: "ns", Pod: "podA", Container: "ctA"},
+	}, "", ts, true, 200, src)
+
+	ev, ok := <-events
+	if !ok {
+		t.Fatal("канал закрылся без событий")
+	}
+	if ev.Err != nil {
+		t.Fatalf("неожиданная ошибка: %v", ev.Err)
+	}
+	if ev.Line.Message != "resumed" {
+		t.Errorf("message = %q, want resumed", ev.Line.Message)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("source вызван %d раз до первой строки, want 1", len(calls))
+	}
+	if calls[0].sinceTime != ts || calls[0].lines != 0 {
+		t.Errorf("первый вызов source = %+v, want sinceTime=%q lines=0 (resume без дублей)", calls[0], ts)
+	}
+	cancel()
+	// Канал обязан закрыться — воркеры по отмене контекста не утекают.
+	for range events {
 	}
 }
 
@@ -2925,7 +3005,7 @@ func TestRestartFollowStreamGivesUp(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", true, 0, src)
+	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", "", true, 0, src)
 
 	// Ожидается ровно 2 события ошибки: "will retry" и финальный give-up,
 	// затем канал закрывается.
@@ -3000,7 +3080,7 @@ func TestRestartFollowStreamCancelsCleanly(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", true, 10, src)
+	ch := restartFollowStream(ctx, []Selection{{Context: "c", Namespace: "ns", Pod: "p"}}, "", "", true, 10, src)
 
 	// Источник открыт и ждёт данные (блокирующее чтение).
 	select {

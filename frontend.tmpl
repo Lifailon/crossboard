@@ -1188,10 +1188,20 @@
         min-width: 0;
         height: 0;
         border-radius: 1px 1px 0 0;
-        background: linear-gradient(180deg, var(--sky) 0%, rgba(56, 189, 248, 0.35) 55%, rgba(56, 189, 248, 0.12) 100%);
+        background: linear-gradient(
+          180deg,
+          var(--sky) 0%,
+          rgba(56, 189, 248, 0.35) 55%,
+          rgba(56, 189, 248, 0.12) 100%
+        );
       }
       .tl-bins .bin.err {
-        background: linear-gradient(180deg, #f87171 0%, rgba(248, 113, 113, 0.45) 55%, rgba(248, 113, 113, 0.14) 100%);
+        background: linear-gradient(
+          180deg,
+          #f87171 0%,
+          rgba(248, 113, 113, 0.45) 55%,
+          rgba(248, 113, 113, 0.14) 100%
+        );
       }
       .tl-axisbar {
         position: absolute;
@@ -1211,8 +1221,12 @@
         line-height: 1;
         white-space: nowrap;
       }
-      .tl-label.lt-start { left: 14px; }
-      .tl-label.lt-end { right: 14px; }
+      .tl-label.lt-start {
+        left: 14px;
+      }
+      .tl-label.lt-end {
+        right: 14px;
+      }
       .tl-tip {
         position: absolute;
         top: 2px;
@@ -1427,9 +1441,7 @@
       {{end}}
       <div class="auto">
         {{if not .AuthRequired}}
-        <button id="autoBtn">
-          Update
-        </button>
+        <button id="autoBtn">Update</button>
         <select id="autoInt">
           <option value="10" selected>10s</option>
           <option value="20">20s</option>
@@ -1465,9 +1477,7 @@
         <button type="submit" class="primary">Log in</button>
       </form>
     </section>
-    {{else}}
-
-    {{if .Error}}
+    {{else}} {{if .Error}}
     <div class="banner">Some clusters are unavailable: {{.Error}}</div>
     {{end}}
 
@@ -1556,10 +1566,7 @@
             <thead>
               <tr>
                 <th class="col-chk">
-                  <input
-                    type="checkbox"
-                    id="selectAll"
-                  />
+                  <input type="checkbox" id="selectAll" />
                 </th>
                 <th data-key="ctx">Cluster</th>
                 <th data-key="ns">Namespace</th>
@@ -1618,16 +1625,8 @@
                     >{{.RestartCount}}</span
                   >{{else}}<span class="badge muted">0</span>{{end}}
                 </td>
-                <td
-                  class="cpu hide-sm hide-md"
-                >
-                  {{.Cpu}}
-                </td>
-                <td
-                  class="mem hide-sm hide-md"
-                >
-                  {{.Mem}}
-                </td>
+                <td class="cpu hide-sm hide-md">{{.Cpu}}</td>
+                <td class="mem hide-sm hide-md">{{.Mem}}</td>
               </tr>
               {{else}}
               <tr>
@@ -1659,10 +1658,7 @@
                 placeholder="Filter log content..."
                 autocomplete="off"
               />
-              <div
-                class="seg"
-                id="modeSeg"
-              >
+              <div class="seg" id="modeSeg">
                 <label class="seg-btn"
                   ><input
                     type="radio"
@@ -1694,15 +1690,11 @@
                 ></span
                 >Ignore-case
               </label>
-              <label
-                class="sw"
-              >
+              <label class="sw">
                 <input type="checkbox" id="ctxChk" /><span class="trk"></span
                 >Context
               </label>
-              <label
-                class="sw"
-              >
+              <label class="sw">
                 <input type="checkbox" id="wrapChk" checked /><span
                   class="trk"
                 ></span
@@ -1716,27 +1708,12 @@
               </label>
             </div>
             <div class="mt-row" id="toolsModes">
-              <button id="followChk" class="tgl on">
-                Follow
-              </button>
-              <button
-                id="btnPause"
-                class="tgl"
-              >
-                Pause
-              </button>
-              <button
-                id="autoScroll"
-                class="tgl on"
-              >
-                Scroll
-              </button>
+              <button id="followChk" class="tgl on">Follow</button>
+              <button id="btnPause" class="tgl">Pause</button>
+              <button id="autoScroll" class="tgl on">Scroll</button>
               <button id="btnClearLogs">Clear</button>
               <button id="btnDownload">Download</button>
-              <select
-                id="sinceSel"
-                class="sel"
-              >
+              <select id="sinceSel" class="sel">
                 <option value="">Age: all</option>
                 <option value="1h">1h</option>
                 <option value="3h">3h</option>
@@ -1747,10 +1724,7 @@
                 <option value="72h">72h</option>
                 <option value="168h">168h</option>
               </select>
-              <select
-                id="linesSel"
-                class="sel"
-              >
+              <select id="linesSel" class="sel">
                 <option value="0" selected>History: no</option>
                 <option value="100">100</option>
                 <option value="500">500</option>
@@ -1768,9 +1742,7 @@
               <span class="count" id="lineCount">0</span>
             </div>
           </div>
-          <button id="btnClose" class="modal-close">
-            &#10005;
-          </button>
+          <button id="btnClose" class="modal-close">&#10005;</button>
         </header>
         <div class="tl" id="logTimeline">
           <div class="tl-bins" id="tlBins"></div>
@@ -1791,9 +1763,7 @@
       <div class="modal-window">
         <header class="modal-head">
           <h2>Resources <span id="specTitle"></span></h2>
-          <button id="btnSpecClose" class="modal-close">
-            &#10005;
-          </button>
+          <button id="btnSpecClose" class="modal-close">&#10005;</button>
         </header>
         <div class="spec-meta" id="specMeta"></div>
         <div class="spec-wrap">
@@ -1827,9 +1797,7 @@
       <div class="modal-window">
         <header class="modal-head">
           <h2>Resources <span>Events</span></h2>
-          <button id="btnEvClose" class="modal-close">
-            &#10005;
-          </button>
+          <button id="btnEvClose" class="modal-close">&#10005;</button>
         </header>
         <div class="spec-tools">
           <div class="mt-row">
@@ -1839,19 +1807,11 @@
               placeholder="Filter by event messages"
               autocomplete="off"
             />
-            <button
-              id="evPause"
-              class="tgl"
-            >
-              Pause
-            </button>
+            <button id="evPause" class="tgl">Pause</button>
             <select id="evCtx">
               <option value="">Cluster: all</option>
             </select>
-            <div
-              class="seg"
-              id="evTypeSeg"
-            >
+            <div class="seg" id="evTypeSeg">
               <label class="seg-btn"
                 ><input type="radio" name="evType" value="" checked /><span
                   >All</span
@@ -2660,6 +2620,7 @@
       function clearLog() {
         streamRetries = 0;
         lastKey = null;
+        lastTs = "";
         vpClearRows();
         logs = []; csum = [0];
         markIndex = -1;
@@ -2711,6 +2672,9 @@
 
       var streamRetries = 0;
       var lastKey = null;
+      // Метка последней принятой строки: точка возобновления после Pause/Resume,
+      // чтобы kubectl --since-time вернул только новые строки (без дублей истории).
+      var lastTs = "";
       var settling = false;
       var settleTimer = null;
       var restartTimer = null;
@@ -3111,7 +3075,7 @@
         });
       }
 
-      function startStream() {
+      function startStream(resumeTs) {
         // Модалка закрыта (или scheduled-рестарт сработал после закрытия) —
         // не открываем фантомный SSE-поток.
         if (modal.classList.contains("hidden")) { closeStream(); return; }
@@ -3125,7 +3089,13 @@
         stickBottom = true;
         settleStart();
         var params = ["since=" + encodeURIComponent(sinceSel.value)];
-        params.push("lines=" + (linesSel.value === "0" ? "1" : linesSel.value));
+        if (resumeTs) {
+          // Возобновление после Pause/Resume: только новые строки с метки,
+          // иначе kubectl повторит всю историю и задублирует вывод.
+          params.push("since-time=" + encodeURIComponent(resumeTs));
+        } else {
+          params.push("lines=" + (linesSel.value === "0" ? "1" : linesSel.value));
+        }
         if (!followOn()) params.push("follow=0");
         ids.forEach(function (id) { params.push("sel=" + encodeURIComponent(id)); });
         ES = new EventSource("/logs?" + params.join("&"));
@@ -3368,6 +3338,7 @@
                   "|" + (d.timestamp || "") + "|" + (d.message || d.error || "");
         if (key === lastKey) return;
         lastKey = key;
+        if (!isErr && d.timestamp) lastTs = d.timestamp;
         var msg = d.message || d.error || "";
         var tsMs = new Date(d.timestamp || "").getTime();
         if (!isNaN(tsMs)) tlAdd(tsMs, isErr);
@@ -3491,7 +3462,14 @@
         if (paused) {
           paused = false; btnPause.textContent = "Pause";
           btnPause.classList.remove("on");
-          startStream();
+          if (lastTs) {
+            // Продолжаем с последней метки: сервер не повторяет историю.
+            startStream(lastTs);
+          } else {
+            // Меток нет — безопасная полная перезагрузка (без дублей).
+            clearLog();
+            startStream();
+          }
         } else {
           paused = true; btnPause.textContent = "Resume";
           btnPause.classList.add("on");
@@ -4236,7 +4214,6 @@
       })();
     </script>
 
-    {{end}}
-    {{end}}
+    {{end}} {{end}}
   </body>
 </html>

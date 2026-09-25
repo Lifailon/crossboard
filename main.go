@@ -2070,7 +2070,7 @@ func parseLogLine(sel Selection, raw string) LogEvent {
 
 type sourceFunc func(sel Selection, since string, sinceTime string, follow bool, lines int) (io.ReadCloser, error)
 
-func runLogStream(ctx context.Context, sels []Selection, since string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
+func runLogStream(ctx context.Context, sels []Selection, since string, sinceTime string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
 	out := make(chan LogStreamEvent, 128)
 	var wg sync.WaitGroup
 
@@ -2078,7 +2078,7 @@ func runLogStream(ctx context.Context, sels []Selection, since string, follow bo
 		wg.Add(1)
 		go func(sel Selection) {
 			defer wg.Done()
-			rc, err := src(sel, since, "", follow, lines)
+			rc, err := src(sel, since, sinceTime, follow, lines)
 			if err != nil {
 				out <- LogStreamEvent{Sel: sel, Err: fmt.Errorf("failed to open stream: %w", err)}
 				return
@@ -2135,7 +2135,7 @@ func runLogStream(ctx context.Context, sels []Selection, since string, follow bo
 //
 // Возобновление идёт по последней прочитанной метке времени (--since-time),
 // поэтому нет ни дублей, ни потери строк из «окна разрыва».
-func restartFollowStream(ctx context.Context, sels []Selection, since string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
+func restartFollowStream(ctx context.Context, sels []Selection, since string, sinceTime string, follow bool, lines int, src sourceFunc) <-chan LogStreamEvent {
 	out := make(chan LogStreamEvent, 128)
 	var wg sync.WaitGroup
 
@@ -2161,7 +2161,9 @@ func restartFollowStream(ctx context.Context, sels []Selection, since string, fo
 		wg.Add(1)
 		go func(sel Selection) {
 			defer wg.Done()
-			lastTS := ""
+			// Клиентский resume (Pause/Resume) задаёт стартовую метку;
+			// дальше она обновляется как обычно по последней прочитанной строке.
+			lastTS := sinceTime
 			errs := 0
 
 			for ctx.Err() == nil {
@@ -2763,6 +2765,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	since := r.URL.Query().Get("since")
+	// since-time — точка возобновления после клиентской паузы (Pause/Resume):
+	// стрим начинается с этой метки, не повторяя уже загруженную историю.
+	sinceTime := r.URL.Query().Get("since-time")
 	follow := r.URL.Query().Get("follow") != "0"
 	lines := 0
 	if v := r.URL.Query().Get("lines"); v != "" {
@@ -2778,9 +2783,9 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	var events <-chan LogStreamEvent
 	if follow {
-		events = restartFollowStream(r.Context(), sels, since, follow, lines, openLogStreamFn)
+		events = restartFollowStream(r.Context(), sels, since, sinceTime, follow, lines, openLogStreamFn)
 	} else {
-		events = runLogStream(r.Context(), sels, since, follow, lines, openLogStreamFn)
+		events = runLogStream(r.Context(), sels, since, sinceTime, follow, lines, openLogStreamFn)
 	}
 	// Периодический heartbeat (: ping — комментарий SSE), чтобы прокси
 	// не рвали долгую "тихую" сессию follow.
